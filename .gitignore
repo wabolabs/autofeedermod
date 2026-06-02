@@ -1,0 +1,14 @@
+# KiCad backups
+*~
+*.bak
+*-backups/
+_autosave-*
+# KiCad cache / prefs
+*.kicad_sexpr.bak
+*.kicad_prl
+fp-info-cache
+# OS files
+.DS_Store
+Thumbs.db
+# Secrets
+firmware/esphome/secrets.yaml
