@@ -1,0 +1,8 @@
+(sym_lib_table
+  (version 1)
+  (lib (name "autofeeder")
+    (type "Legacy")
+    (uri "${KIPRJMOD}/../symbols/autofeeder.kicad_sym")
+    (options "")
+    (descr "Autofeeder custom symbols"))
+)
