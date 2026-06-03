@@ -29,7 +29,14 @@ FP_SOIC8 = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
 FP_JST_XH = "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical"
 FP_USB_C = "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
 FP_PIN_1x4 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
-FP_OLED = "Display:SSD1306_128x64_SPI"
+FP_OLED = "autofeeder:OLED_1.3in_SSD1306_SPI"
+# Compact ~4x4 SMD tactile (CK KMR2 series), matching the original board's small buttons.
+# Front-only pads keep the dense back side clear; narrow pads clear the corner mounting
+# holes at their measured positions.
+FP_SW_TACT = "Button_Switch_SMD:SW_Push_1P1T_NO_CK_KMR2"
+FP_ESP = "autofeeder:ESP32_C6_Zero"    # 2.54mm TH socket for Waveshare ESP32-C6-Zero
+FP_SOT23_6_HS = "Package_TO_SOT_SMD:SOT-23-6_Handsoldering"
+FP_L_0805 = "Inductor_SMD:L_0805_2012Metric"
 
 
 def build() -> Sheet:
@@ -119,20 +126,42 @@ def build() -> Sheet:
     # Note: CHRG is open-drain, so LED cathode goes to GND, anode to CHRG
     # Meaning: LED illuminates when CHRG pulls low (charging)
 
-    # U3: DW01A+FS8205A battery protection
-    u3 = s.add("U3", "autofeeder:DW01A_FS8205A", "DW01A+FS8205A", at=(55, 110), footprint="")
-    label_pins(u3, {"B+": "BATT_CHG", "B-": "BATT_N", "P+": "BATT_PROT", "P-": "GND"})
+    # U3: DW01A battery protection IC (SOT-23-6, hand-solderable)
+    u3 = s.add("U3", "Battery_Management:DW01A", "DW01A", at=(55, 110),
+               footprint=FP_SOT23_6_HS)
+    label_pins(u3, {"5": "BATT_CHG", "6": "BATT_N", "1": "OD_GATE",
+                    "3": "OC_GATE", "2": "BATT_N", "4": "NC_TD"})
+    s.no_connect(u3.pin_xy("4"))
 
-    # U4: TPS63802 buck-boost
-    u4 = s.add("U4", "autofeeder:TPS63802", "TPS63802", at=(55, 150), footprint="")
-    label_pins(u4, {"7": "BATT_PROT", "1": "VCC_3V3", "9": "VCC_3V3",
-                    "2": "FB", "6": "EN_3V3", "3": "EN_3V3",
-                    "4,10": "GND", "8": "SW"})
+    # U8: FS8205A dual NMOS (SOT-23-6) — charge/discharge protection FETs driven by DW01A
+    u8 = s.add("U8", "autofeeder:FS8205A", "FS8205A", at=(55, 125),
+               footprint=FP_SOT23_6_HS)
+    label_pins(u8, {"1": "OD_GATE", "4": "OC_GATE",
+                    "2": "BATT_N", "3": "BATT_N", "5": "GND"})
+    s.no_connect(u8.pin_xy("6"))
 
-    # C4, C5: TPS63802 caps
-    c4 = s.add("C4", "Device:C", "10uF", at=(35, 150), footprint=FP_C_0805)
+    # U4: RT6150A buck-boost (SOT-23-6, hand-solderable) — replaces QFN TPS63802
+    # Vout = 0.6V * (1 + R11/R12). R11=470k, R12=100k -> Vout ~3.42V (safe for ESP32-C6 3.0-3.6V range)
+    u4 = s.add("U4", "autofeeder:RT6150A", "RT6150A", at=(55, 150),
+               footprint=FP_SOT23_6_HS)
+    label_pins(u4, {"5": "BATT_PROT", "6": "BATT_PROT",
+                    "2": "GND", "4": "VCC_3V3",
+                    "1": "SW", "3": "FB"})
+
+    # L1: 4.7uH inductor for RT6150A SW node (0805, hand-solderable)
+    l1 = s.add("L1", "Device:L", "4.7uH", at=(35, 145), footprint=FP_L_0805)
+    label_pins(l1, {"1": "SW", "2": "VCC_3V3"})
+
+    # R11/R12: RT6150A feedback divider (Vout = 0.6V * (1 + R11/R12))
+    r11 = s.add("R11", "Device:R", "470k", at=(75, 145), footprint=FP_R_0603)
+    label_pins(r11, {"1": "VCC_3V3", "2": "FB"})
+    r12 = s.add("R12", "Device:R", "100k", at=(75, 155), footprint=FP_R_0603)
+    label_pins(r12, {"1": "FB", "2": "GND"})
+
+    # C4, C5: RT6150A input/output caps (same values as TPS63802)
+    c4 = s.add("C4", "Device:C", "10uF", at=(35, 155), footprint=FP_C_0805)
     label_pins(c4, {"1": "BATT_PROT", "2": "GND"})
-    c5 = s.add("C5", "Device:C", "22uF", at=(75, 150), footprint=FP_C_0805)
+    c5 = s.add("C5", "Device:C", "22uF", at=(55, 165), footprint=FP_C_0805)
     label_pins(c5, {"1": "VCC_3V3", "2": "GND"})
 
     # R3, R4: Battery voltage divider (BAT_MON)
@@ -143,26 +172,36 @@ def build() -> Sheet:
 
     # ===== MCU SECTION =====
 
-    # U1: ESP32-C6-WROOM-1
-    u1 = s.add("U1", "autofeeder:ESP32-C6-WROOM-1", "ESP32-C6-WROOM-1", at=(120, 75))
-    label_pins(u1, {"24": "VCC_3V3", "25": "EN_3V3", "1": "GND", "26": "GND"})
-    # Display GPIOs
-    label_pins(u1, {"16": "DISP_CS", "17": "DISP_DC", "13": "DISP_RST",
-                    "18": "DISP_SCK", "19": "DISP_MOSI"})
-    # Motor GPIOs
-    label_pins(u1, {"14": "MOTOR_IN1", "11": "MOTOR_IN2"})
-    # CAN GPIOs
-    label_pins(u1, {"21": "CAN_TX", "22": "CAN_RX"})
-    # Buttons GPIOs
+    # U1: Waveshare ESP32-C6-Zero (socketed via 2x9 2.54mm pin socket headers)
+    # Powered via 3V3 pin directly from RT6150A — Zero's internal LDO is bypassed.
+    # Zero's onboard USB-C handles flashing (tucked inside enclosure; open case to access).
+    # Pinout confirmed from official Waveshare diagram:
+    #   Left  (1-9) : 5V  GND  3V3  GP0-GP5
+    #   Right (10-18): TX  RX  GP14 GP15 GP18 GP19 GP20 GP21 GP22
+    #   Bottom(19-25): GP13 GP12 GP23 GP9/BOOT GP8/LED GP7 GP6
+    u1 = s.add("U1", "autofeeder:ESP32_C6_Zero", "ESP32-C6-Zero",
+               at=(120, 75), footprint=FP_ESP)
+    # Power
+    label_pins(u1, {"3": "VCC_3V3", "2": "GND"})
+    s.no_connect(u1.pin_xy("1"))      # 5V: unused — main board USB-C powers TP4056
+    # Buttons: GP0-GP5 on left rail (all ADC-capable, 6 buttons)
     label_pins(u1, {"4": "BUTTON_POWER", "5": "BUTTON_TIMER",
-                    "7": "BUTTON_MANUAL", "8": "BUTTON_SETTINGS",
-                    "9": "BUTTON_UP", "10": "BUTTON_DOWN"})
-    # Battery ADC
-    label_pins(u1, {"6": "BAT_MON"})
-    # Status LED
-    label_pins(u1, {"2": "STATUS_LED"})
-    # TXD0/RXD0 (programming UART)
-    label_pins(u1, {"2": "PROG_TX", "3": "PROG_RX"})
+                    "6": "BUTTON_MANUAL", "7": "BUTTON_SETTINGS",
+                    "8": "BUTTON_UP", "9": "BUTTON_DOWN"})
+    # Motor control on TX/RX pads (right rail top 2) — repurposed from UART programming.
+    # Programming is done via the Zero's own USB-C (tucked inside enclosure) or boot-ROM mode.
+    label_pins(u1, {"10": "MOTOR_IN1", "11": "MOTOR_IN2"})
+    # Display SPI: GP14=SCK, GP15=MOSI, GP18=CS, GP19=DC
+    # DISP_RST removed from socket — GP20 reassigned to BAT_MON; RST pulled up via R13
+    label_pins(u1, {"12": "DISP_SCK", "13": "DISP_MOSI",
+                    "14": "DISP_CS",  "15": "DISP_DC"})
+    # CAN bus: GP21=TX, GP22=RX
+    label_pins(u1, {"17": "CAN_TX", "18": "CAN_RX"})
+    # BAT_MON on GP20 (pad 16) — moved from inaccessible bottom pad to main socket rail
+    label_pins(u1, {"16": "BAT_MON"})
+    # All bottom edge pads (19-25) are no-connect — inaccessible when Zero is socketed
+    for _p in ("19", "20", "21", "22", "23", "24", "25"):
+        s.no_connect(u1.pin_xy(_p))
 
     # C1, C2: ESP32 decoupling
     c1 = s.add("C1", "Device:C", "100nF", at=(145, 60), footprint=FP_C_0603)
@@ -170,9 +209,7 @@ def build() -> Sheet:
     c2 = s.add("C2", "Device:C", "10uF", at=(145, 70), footprint=FP_C_0805)
     label_pins(c2, {"1": "VCC_3V3", "2": "GND"})
 
-    # R9: EN pull-up to 3V3
-    r9 = s.add("R9", "Device:R", "10k", at=(120, 95), footprint=FP_R_0603)
-    label_pins(r9, {"1": "EN_3V3", "2": "VCC_3V3"})
+    # R9: EN pull-up removed — EN is internal on the ESP32-C6-Zero and not exposed on the socket.
 
     # ===== MOTOR SECTION =====
 
@@ -239,7 +276,7 @@ def build() -> Sheet:
     ]
     for ref, net, pos in btn_config:
         sw = s.add(ref, "autofeeder:SW_ALPS_SKRPADE010", "Alps SKRPADE010",
-                   at=pos, footprint="Button_Switch_SMD:SW_SPST_SKRPADE010")
+                   at=pos, footprint=FP_SW_TACT)
         # Pins 1-2 are one switch, 3-4 are the other (4-pin tactile switch)
         # Connect P1 to the GPIO, P2 to GND (or P3/P4 respectively)
         label_at(net, sw.pin_xy("1"))
@@ -247,15 +284,18 @@ def build() -> Sheet:
 
     # ===== PROGRAMMING HEADER =====
 
-    j4 = s.add("J4", "Connector_Generic:Conn_01x04", "PROG", at=(150, 250), footprint=FP_PIN_1x4)
-    label_pins(j4, {"1": "VCC_3V3", "2": "PROG_TX", "3": "PROG_RX", "4": "GND"})
+    # J4: debug/power header (UART pads repurposed for motor; Zero's USB-C handles flashing)
+    j4 = s.add("J4", "Connector_Generic:Conn_01x04", "DBG", at=(150, 250), footprint=FP_PIN_1x4)
+    label_pins(j4, {"1": "VCC_3V3", "4": "GND"})
+    s.no_connect(j4.pin_xy("2"))
+    s.no_connect(j4.pin_xy("3"))
 
-    # ===== STATUS LED =====
+    # R13: DISP_RST pull-up — SSD1306 RST pin held high; no GPIO needed for hardware reset
+    r13 = s.add("R13", "Device:R", "10k", at=(240, 40), footprint=FP_R_0603)
+    label_pins(r13, {"1": "VCC_3V3", "2": "DISP_RST"})
 
-    led1 = s.add("LED_STATUS", "Device:LED", "GREEN", at=(100, 95), footprint="LED_SMD:LED_0603_1608Metric")
-    r7 = s.add("R7", "Device:R", "330R", at=(100, 105), footprint=FP_R_0603)
-    label_pins(r7, {"1": "STATUS_LED", "2": "LED_L"})
-    label_pins(led1, {"1": "VCC_3V3", "2": "LED_L"})
+    # STATUS LED: replaced by the WS2812B RGB LED built into the ESP32-C6-Zero (on IO8/pad 12).
+    # No discrete LED or current-limit resistor needed on the main board.
 
     # ===== POWER SYMBOLS =====
 

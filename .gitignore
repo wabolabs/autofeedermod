@@ -7,8 +7,16 @@ _autosave-*
 *.kicad_sexpr.bak
 *.kicad_prl
 fp-info-cache
+*.lck
 __pycache__/
 *.pyc
+# Generated reports / intermediates
+*-erc.rpt
+*-drc.rpt
+fabrication/preview/
+fabrication/*.dsn
+fabrication/*.ses
+fabrication/*.net
 # OS files
 .DS_Store
 Thumbs.db

@@ -27,6 +27,7 @@ class PinGeom:
 class SymbolLibrary:
     def __init__(self, project_lib: str | None = None) -> None:
         self._files: dict[str, Path] = {}
+        self._project_lib: str | None = None
         for d in STOCK_LIB_DIRS:
             if d.is_dir():
                 for f in d.glob("*.kicad_sym"):
@@ -34,7 +35,12 @@ class SymbolLibrary:
         if project_lib:
             pl = Path(project_lib)
             if pl.is_file():
+                self._project_lib = pl.stem
                 self._files[pl.stem] = pl
+
+    @property
+    def project_lib(self) -> str | None:
+        return self._project_lib
 
     @lru_cache(maxsize=None)
     def _lib_root(self, lib: str) -> Sym:
@@ -78,3 +84,36 @@ class SymbolLibrary:
                     x=x, y=y, rotation=rot,
                 ))
         return pins
+
+    def get_custom_symbol(self, lib_id: str) -> Sym | None:
+        """Return the symbol definition for lib_symbols cache.
+        Returns symbols from any library (project or stock)."""
+        lib, name = lib_id.split(":", 1)
+        if lib not in self._files:
+            return None
+        root = self._lib_root(lib)
+        for sym in root.find_all("symbol"):
+            if sym.children and sym.children[0] == name:
+                out = copy.deepcopy(sym)
+                out.children[0] = lib_id
+                def replace_part(node):
+                    if isinstance(node, Sym):
+                        for i, child in enumerate(node.children):
+                            if isinstance(child, str) and "${PART}" in child:
+                                node.children[i] = child.replace("${PART}", name)
+                            elif isinstance(child, Sym):
+                                replace_part(child)
+                replace_part(out)
+                out.children = [
+                    child for child in out.children
+                    if not (isinstance(child, Sym) and child.head == "symbol"
+                            and child.children and child.children[0] == name)
+                ]
+                for child in out.children:
+                    if isinstance(child, Sym) and child.head == "property":
+                        child.children = [
+                            sub for sub in child.children
+                            if not (isinstance(sub, Sym) and sub.head == "id")
+                        ]
+                return out
+        return None

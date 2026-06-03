@@ -134,7 +134,7 @@ class Sheet:
     def to_sexp(self) -> Sym:
         root = S("kicad_sch")
         root.children.extend([
-            S("version", 20230121),
+            S("version", 20250114),
             S("generator", "autofeeder_sch_gen"),
             S("uuid", self.uuid),
             S("paper", self.paper),
@@ -145,7 +145,16 @@ class Sheet:
             S("rev", self.rev),
             S("company", self.company),
         ))
-        root.children.append(S("lib_symbols"))
+        # lib_symbols — include custom symbol definitions
+        lib_sym = S("lib_symbols")
+        seen_lib_ids: set[str] = set()
+        for c in self.components:
+            if c.lib_id not in seen_lib_ids:
+                seen_lib_ids.add(c.lib_id)
+                custom = self.lib.get_custom_symbol(c.lib_id)
+                if custom:
+                    lib_sym.children.append(custom)
+        root.children.append(lib_sym)
         # Junctions
         for j in self.junctions:
             root.children.append(S("junction",
