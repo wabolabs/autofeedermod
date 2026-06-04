@@ -26,7 +26,7 @@
 	(fp_rect (start -9.89 -11.43) (end 9.89 11.43) (stroke (width 0.12) (type solid)) (fill none) (layer "F.SilkS"))
 	(fp_rect (start -9.89 -11.43) (end 9.89 11.43) (stroke (width 0.1) (type solid)) (fill none) (layer "F.Fab"))
 	(fp_line (start -7.62 11.43) (end 7.62 11.43) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
-	(fp_rect (start -10.5 -12.0) (end 10.5 14.2) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
+	(fp_rect (start -10.0 -12.0) (end 10.0 13.3) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
 
 	(fp_circle (center -8.89 10.16) (end -8.19 10.16) (stroke (width 0.4) (type solid)) (fill solid) (layer "F.SilkS"))
 
@@ -50,12 +50,12 @@
 	(pad "17" thru_hole circle (at  8.89  -7.62) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
 	(pad "18" thru_hole circle (at  8.89 -10.16) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
 
-	(pad "19" thru_hole circle (at -7.62  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "20" thru_hole circle (at -5.08  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "21" thru_hole circle (at -2.54  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "22" thru_hole circle (at  0.00  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "23" thru_hole circle (at  2.54  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "24" thru_hole circle (at  5.08  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
-	(pad "25" thru_hole circle (at  7.62  12.70) (size 1.1 1.1) (drill 0.8) (layers "*.Cu" "*.Mask"))
+	(pad "19" thru_hole circle (at -7.62  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "20" thru_hole circle (at -5.08  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "21" thru_hole circle (at -2.54  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "22" thru_hole circle (at  0.00  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "23" thru_hole circle (at  2.54  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "24" thru_hole circle (at  5.08  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
+	(pad "25" thru_hole circle (at  7.62  12.70) (size 1.4 1.4) (drill 1.0) (layers "*.Cu" "*.Mask"))
 	(embedded_fonts no)
 )

@@ -93,8 +93,8 @@ def build() -> Sheet:
     # USB-C GND: A1, A12, B1, B12
     for gnd_pin in ("A1", "A12", "B1", "B12"):
         label_at("GND", j3.pin_xy(gnd_pin))
-    # USB-C SHIELD
-    s.no_connect(j3.pin_xy("S1"))
+    # USB-C SHIELD → GND (reduces EMI, reference for ESD discharge path)
+    label_at("GND", j3.pin_xy("S1"))
     # USB-C CC pins: 5.1k to GND
     cc1 = s.add("R_CC1", "Device:R", "5.1k", at=(40, 80), rotation=90, footprint=FP_R_0603)
     cc2 = s.add("R_CC2", "Device:R", "5.1k", at=(50, 80), rotation=90, footprint=FP_R_0603)
@@ -107,9 +107,9 @@ def build() -> Sheet:
     s.no_connect(j3.pin_xy("A7"))
     s.no_connect(j3.pin_xy("B6"))
     s.no_connect(j3.pin_xy("B7"))
-    # SBU1/2 → CAN_H/L
-    label_at("CAN_H", j3.pin_xy("A8"))
-    label_at("CAN_L", j3.pin_xy("B8"))
+    # SBU1/2 → CAN_H_PROT/L_PROT via series resistors (handled below)
+    # (no direct labels here — the CAN series protection resistors R6/R10
+    #  connect via CAN_H_PROT / CAN_L_PROT labels at the USB-C side)
 
     # U2: TP4056 charger
     u2 = s.add("U2", "autofeeder:TP4056", "TP4056", at=(55, 65), footprint=FP_SOIC8)
@@ -140,25 +140,26 @@ def build() -> Sheet:
                     "2": "BATT_N", "3": "BATT_N", "5": "GND"})
     s.no_connect(u8.pin_xy("6"))
 
-    # U4: RT6150A buck-boost (SOT-23-6, hand-solderable) — replaces QFN TPS63802
-    # Vout = 0.6V * (1 + R11/R12). R11=470k, R12=100k -> Vout ~3.42V (safe for ESP32-C6 3.0-3.6V range)
-    u4 = s.add("U4", "autofeeder:RT6150A", "RT6150A", at=(55, 150),
-               footprint=FP_SOT23_6_HS)
-    label_pins(u4, {"5": "BATT_PROT", "6": "BATT_PROT",
-                    "2": "GND", "4": "VCC_3V3",
-                    "1": "SW", "3": "FB"})
+    # U4: TPS63031DSKR buck-boost (WSON-10, fixed 3.3V output)
+    # Fixed 3.3V output — no feedback resistors needed. Pinout per DSK package:
+    # 1=VOUT, 2=L2, 3=PGND, 4=L1, 5=VIN, 6=EN, 7=PS/SYNC, 8=VINA, 9=GND, 10=FB
+    u4 = s.add("U4", "autofeeder:TPS63031DSKR", "TPS63031DSKR", at=(55, 150))
+    label_pins(u4, {"5": "BATT_PROT",   # VIN
+                    "8": "BATT_PROT",   # VINA
+                    "6": "BATT_PROT",   # EN (tie to input to always enable)
+                    "3": "GND",         # PGND
+                    "9": "GND",         # GND
+                    "7": "GND",         # PS/SYNC (GND=enable power-save mode)
+                    "1": "VCC_3V3",     # VOUT
+                    "10": "VCC_3V3",    # FB (tie to VOUT for fixed 3.3V)
+                    "4": "L1_NODE",     # L1
+                    "2": "L2_NODE"})    # L2
 
-    # L1: 4.7uH inductor for RT6150A SW node (0805, hand-solderable)
+    # L1: 4.7uH inductor for TPS63031 L1-L2 (SW node to VOUT)
     l1 = s.add("L1", "Device:L", "4.7uH", at=(35, 145), footprint=FP_L_0805)
-    label_pins(l1, {"1": "SW", "2": "VCC_3V3"})
+    label_pins(l1, {"1": "L1_NODE", "2": "L2_NODE"})
 
-    # R11/R12: RT6150A feedback divider (Vout = 0.6V * (1 + R11/R12))
-    r11 = s.add("R11", "Device:R", "470k", at=(75, 145), footprint=FP_R_0603)
-    label_pins(r11, {"1": "VCC_3V3", "2": "FB"})
-    r12 = s.add("R12", "Device:R", "100k", at=(75, 155), footprint=FP_R_0603)
-    label_pins(r12, {"1": "FB", "2": "GND"})
-
-    # C4, C5: RT6150A input/output caps (same values as TPS63802)
+    # C4, C5: TPS63031 input/output caps
     c4 = s.add("C4", "Device:C", "10uF", at=(35, 155), footprint=FP_C_0805)
     label_pins(c4, {"1": "BATT_PROT", "2": "GND"})
     c5 = s.add("C5", "Device:C", "22uF", at=(55, 165), footprint=FP_C_0805)
@@ -191,17 +192,28 @@ def build() -> Sheet:
     # Motor control on TX/RX pads (right rail top 2) — repurposed from UART programming.
     # Programming is done via the Zero's own USB-C (tucked inside enclosure) or boot-ROM mode.
     label_pins(u1, {"10": "MOTOR_IN1", "11": "MOTOR_IN2"})
-    # Display SPI: GP14=SCK, GP15=MOSI, GP18=CS, GP19=DC
-    # DISP_RST removed from socket — GP20 reassigned to BAT_MON; RST pulled up via R13
+    # Display SPI: GP14=SCK, GP15=MOSI, GP18=CS
+    # DISP_DC moved to bottom pad GP12 to resolve pin conflict with MOTOR_IN1 (both on GPIO19)
     label_pins(u1, {"12": "DISP_SCK", "13": "DISP_MOSI",
-                    "14": "DISP_CS",  "15": "DISP_DC"})
+                    "14": "DISP_CS"})
+    # GPIO19 (pad 15) and GPIO20 (pad 16) are NC — conflicts with MOTOR pins resolved
+    s.no_connect(u1.pin_xy("15"))
+    s.no_connect(u1.pin_xy("16"))
     # CAN bus: GP21=TX, GP22=RX
     label_pins(u1, {"17": "CAN_TX", "18": "CAN_RX"})
-    # BAT_MON on GP20 (pad 16) — moved from inaccessible bottom pad to main socket rail
-    label_pins(u1, {"16": "BAT_MON"})
-    # All bottom edge pads (19-25) are no-connect — inaccessible when Zero is socketed
-    for _p in ("19", "20", "21", "22", "23", "24", "25"):
-        s.no_connect(u1.pin_xy(_p))
+    # Bottom edge pads (19-25) — accessed via pogo pins soldered into through-holes.
+    # These contact the Zero module's bottom castellated pads.
+    # Pad 20 (GP12): DISP_DC (moved from conflicted GPIO19)
+    # Pad 25 (GP6):  BAT_MON (moved from conflicted GPIO20, ADC-capable)
+    # Pad 19 (GP13): I2C_SDA (DS3231 RTC)
+    # Pad 21 (GP23): I2C_SCL (DS3231 RTC)
+    # Pad 24 (GP7):  GPS_TX (UART TX to GPS module)
+    # Pad 23 (GP8):  GPS_RX (UART RX from GPS module, strapping — input only)
+    # Pad 22 (GP9):  NC (BOOT strapping, avoid)
+    label_pins(u1, {"20": "DISP_DC", "25": "BAT_MON",
+                    "19": "I2C_SDA", "21": "I2C_SCL",
+                    "24": "GPS_TX", "23": "GPS_RX"})
+    s.no_connect(u1.pin_xy("22"))  # GP9/BOOT — strapping, leave NC
 
     # C1, C2: ESP32 decoupling
     c1 = s.add("C1", "Device:C", "100nF", at=(145, 60), footprint=FP_C_0603)
@@ -289,6 +301,24 @@ def build() -> Sheet:
     label_pins(j4, {"1": "VCC_3V3", "4": "GND"})
     s.no_connect(j4.pin_xy("2"))
     s.no_connect(j4.pin_xy("3"))
+
+    # ===== RTC SECTION (DS3231 module) =====
+
+    # J_RTC: 4-pin header for DS3231 module (ZS-042 or equivalent)
+    # Pinout: VCC, GND, SDA, SCL. Module has onboard pull-ups and CR2032 holder.
+    j_rtc = s.add("J_RTC", "Connector_Generic:Conn_01x04", "DS3231", at=(170, 145),
+                  footprint=FP_PIN_1x4)
+    label_pins(j_rtc, {"1": "VCC_3V3", "2": "GND", "3": "I2C_SDA", "4": "I2C_SCL"})
+
+    # ===== GPS SECTION =====
+
+    # J_GPS: 4-pin header for NEO-6M/NEO-8M GPS module
+    # Pinout: VCC, GND, GPS_RX (module TX→ESP), GPS_TX (ESP→module RX)
+    j_gps = s.add("J_GPS", "Connector_Generic:Conn_01x04", "GPS", at=(170, 170),
+                  footprint=FP_PIN_1x4)
+    label_pins(j_gps, {"1": "VCC_3V3", "2": "GND", "3": "GPS_RX", "4": "GPS_TX"})
+
+    # ===== DISPLAY PULL-UPS =====
 
     # R13: DISP_RST pull-up — SSD1306 RST pin held high; no GPIO needed for hardware reset
     r13 = s.add("R13", "Device:R", "10k", at=(240, 40), footprint=FP_R_0603)

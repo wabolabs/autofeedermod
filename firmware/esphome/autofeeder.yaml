@@ -21,74 +21,494 @@ wifi:
 matter:
   enabled: true
 
-# Display (SSD1306 128x64 SPI)
+# ===== I2C BUS (DS3231 RTC) =====
+i2c:
+  sda: GP13
+  scl: GP23
+  scan: false
+  frequency: 100kHz
+
+# ===== TIME SOURCES =====
+time:
+  - platform: ds1307
+    id: rtc_time
+    on_time:
+      - seconds: 0
+        minutes: /1
+        then:
+          - lambda: |-
+              static int last_checked_minute = -1;
+              auto now = id(rtc_time).now();
+              if (!now.is_valid()) return;
+              int current_min = now.minute;
+              if (current_min == last_checked_minute) return;
+              last_checked_minute = current_min;
+              for (int slot = 0; slot < 4; slot++) {
+                int h, m, d; bool en;
+                switch (slot) {
+                  case 0: h = id(sched0_hour); m = id(sched0_min); d = id(sched0_dur); en = id(sched0_enabled); break;
+                  case 1: h = id(sched1_hour); m = id(sched1_min); d = id(sched1_dur); en = id(sched1_enabled); break;
+                  case 2: h = id(sched2_hour); m = id(sched2_min); d = id(sched2_dur); en = id(sched2_enabled); break;
+                  case 3: h = id(sched3_hour); m = id(sched3_min); d = id(sched3_dur); en = id(sched3_enabled); break;
+                }
+                if (en && now.hour == h && now.minute == m && d > 0) {
+                  id(feed_active) = true;
+                  id(feed_duration) = d;
+                  id(feed_remaining) = d;
+                }
+              }
+  - platform: sntp
+    id: sntp_time
+    on_time_sync:
+      then:
+        - lambda: |-
+            if (id(sntp_time).now().is_valid()) {
+              id(rtc_time).synchronize(id(sntp_time));
+            }
+
+# ===== GPS (NEO-6M/NEO-8M — Optional) =====
+uart:
+  tx_pin: GP7
+  rx_pin: GP8
+  baud_rate: 9600
+  id: gps_uart
+
+gps:
+  uart_id: gps_uart
+  id: gps_device
+
+# ===== DISPLAY (SSD1306 128x64 SPI) =====
 spi:
-  clk_pin: GPIO16
-  mosi_pin: GPIO17
+  clk_pin: GP14
+  mosi_pin: GP15
+
+font:
+  - file: "arial.ttf"
+    id: font_small
+    size: 10
+  - file: "arial.ttf"
+    id: font_medium
+    size: 12
+  - file: "arial.ttf"
+    id: font_large
+    size: 16
 
 display:
   - platform: ssd1306_spi
     model: "SSD1306 128x64"
-    cs_pin: GPIO13
-    dc_pin: GPIO14
-    reset_pin: GPIO15
+    cs_pin: GP18
+    dc_pin: GP12
+    reset_pin: GP15
     rotation: 0
     lambda: |-
-      it.print(0, 0, id(font), "Autofeeder");
+      auto now = id(rtc_time).now();
+      int menu = id(menu_state);
+      it.clear();
 
-font:
-  - file: "arial.ttf"
-    id: font
-    size: 12
+      if (id(feed_active)) {
+        it.printf(0, 0, id(font_large), "FEEDING...");
+        it.printf(0, 24, id(font_medium), "%ds left", id(feed_remaining));
+        return;
+      }
 
-# Motor (DRV8871 H-Bridge)
-output:
+      switch (menu) {
+
+        case 0: // STATUS PAGE
+          if (now.is_valid()) {
+            it.printf(0, 0, id(font_large), "%02d:%02d", now.hour, now.minute);
+            it.strftime(0, 18, id(font_small), "%a %b %d", now);
+          } else {
+            it.printf(0, 0, id(font_large), "--:--");
+            it.printf(0, 18, id(font_small), "No RTC time");
+          }
+          it.printf(0, 34, id(font_small), "Bat: %.2fV", id(battery_voltage).state);
+          if (id(gps_device).has_fix()) {
+            it.printf(0, 48, id(font_small), "GPS fix OK");
+          } else {
+            it.printf(0, 48, id(font_small), "GPS: searching");
+          }
+          if (now.is_valid()) {
+            int next_h = -1, next_m = -1;
+            int now_mins = now.hour * 60 + now.minute;
+            for (int slot = 0; slot < 4; slot++) {
+              int h, m, d; bool en;
+              switch (slot) {
+                case 0: h = id(sched0_hour); m = id(sched0_min); d = id(sched0_dur); en = id(sched0_enabled); break;
+                case 1: h = id(sched1_hour); m = id(sched1_min); d = id(sched1_dur); en = id(sched1_enabled); break;
+                case 2: h = id(sched2_hour); m = id(sched2_min); d = id(sched2_dur); en = id(sched2_enabled); break;
+                case 3: h = id(sched3_hour); m = id(sched3_min); d = id(sched3_dur); en = id(sched3_enabled); break;
+              }
+              if (!en || d <= 0) continue;
+              int slot_mins = h * 60 + m;
+              if (slot_mins > now_mins && (next_h < 0 || slot_mins < next_h * 60 + next_m)) {
+                next_h = h; next_m = m;
+              }
+            }
+            if (next_h >= 0) {
+              it.printf(76, 0, id(font_small), "Next:");
+              it.printf(76, 14, id(font_medium), "%02d:%02d", next_h, next_m);
+            }
+          }
+          break;
+
+        case 1: // MANUAL FEED
+          it.printf(0, 0, id(font_medium), "MANUAL FEED");
+          it.printf(0, 18, id(font_small), "Duration: %ds", id(manual_duration));
+          it.printf(0, 34, id(font_small), "UP/DN: adjust");
+          it.printf(0, 50, id(font_small), "MANUAL: start");
+          break;
+
+        case 2: // SCHEDULE LIST
+          it.printf(0, 0, id(font_medium), "Schedules");
+          for (int i = 0; i < 4; i++) {
+            int h, m, d; bool en;
+            switch (i) {
+              case 0: h = id(sched0_hour); m = id(sched0_min); d = id(sched0_dur); en = id(sched0_enabled); break;
+              case 1: h = id(sched1_hour); m = id(sched1_min); d = id(sched1_dur); en = id(sched1_enabled); break;
+              case 2: h = id(sched2_hour); m = id(sched2_min); d = id(sched2_dur); en = id(sched2_enabled); break;
+              case 3: h = id(sched3_hour); m = id(sched3_min); d = id(sched3_dur); en = id(sched3_enabled); break;
+            }
+            int y = 14 + i * 12;
+            if (id(sched_cursor) == i) it.strftime(0, y, id(font_small), ">");
+            it.printf(8, y, id(font_small), "S%d %s %02d:%02d %ds",
+                      i + 1, en ? "ON " : "OFF", h, m, d);
+          }
+          break;
+
+        case 3: // SET RTC TIME
+          it.printf(0, 0, id(font_medium), "Set RTC Time");
+          it.printf(0, 18, id(font_small), "Hr: %02d    Min: %02d",
+                    id(set_hr), id(set_min));
+          if (id(edit_field) == 0)
+            it.printf(0, 34, id(font_small), "EDIT: hours");
+          else
+            it.printf(0, 34, id(font_small), "EDIT: minutes");
+          it.printf(0, 50, id(font_small), "SETTINGS: save");
+          break;
+
+        case 4: // GPS STATUS
+          it.printf(0, 0, id(font_medium), "GPS Status");
+          if (id(gps_device).has_fix()) {
+            it.printf(0, 18, id(font_small), "Fix: 3D");
+          } else {
+            it.printf(0, 18, id(font_small), "No fix");
+          }
+          break;
+
+        case 5: // SETTINGS
+          it.printf(0, 0, id(font_medium), "Settings");
+          it.printf(0, 18, id(font_small), "Motor run: %ds", id(motor_runtime));
+          it.printf(0, 34, id(font_small), "Sleep: %dm", id(sleep_minutes));
+          it.printf(0, 50, id(font_small), "UP/DN: adjust");
+          break;
+      }
+
+# ===== MOTOR CONTROL (DRV8871) =====
+switch:
   - platform: gpio
-    pin: GPIO9
+    pin: GPIO19
     id: motor_in1
+    internal: true
   - platform: gpio
-    pin: GPIO10
+    pin: GPIO20
     id: motor_in2
+    internal: true
 
-# Buttons via ADC resistor ladder on GPIO2
-sensor:
-  - platform: adc
-    pin: GPIO2
-    id: button_adc
-    name: "Buttons ADC"
-    update_interval: 50ms
+# ===== BUTTONS =====
+binary_sensor:
+  - platform: gpio
+    pin: GP0
+    id: btn_power
     internal: true
     filters:
-      - sliding_window_moving_average:
-          window_size: 3
-          send_every: 1
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            int m = id(menu_state);
+            if (m == 0) { id(menu_state) = 1; }
+            else { id(menu_state) = 0; }
 
-# Button mapping via ADC thresholds
-# Values: SW1=0.15V, SW2=0.35V, SW3=0.55V, SW4=0.80V, SW5=1.10V, SW6=1.50V
+  - platform: gpio
+    pin: GP1
+    id: btn_timer
+    internal: true
+    filters:
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            int m = id(menu_state);
+            m = (m + 1) % 6;
+            id(menu_state) = m;
+
+  - platform: gpio
+    pin: GP2
+    id: btn_manual
+    internal: true
+    filters:
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            if (id(menu_state) == 0) {
+              id(feed_active) = true;
+              id(feed_duration) = id(motor_runtime);
+              id(feed_remaining) = id(motor_runtime);
+            } else if (id(menu_state) == 1) {
+              id(feed_active) = true;
+              id(feed_duration) = id(manual_duration);
+              id(feed_remaining) = id(manual_duration);
+            }
+
+  - platform: gpio
+    pin: GP3
+    id: btn_settings
+    internal: true
+    filters:
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            switch (id(menu_state)) {
+              case 0:
+                id(menu_state) = 5;
+                break;
+              case 2:
+                // Toggle selected schedule enabled/disabled
+                {
+                  int s = id(sched_cursor);
+                  switch (s) {
+                    case 0: id(sched0_enabled) = !id(sched0_enabled); break;
+                    case 1: id(sched1_enabled) = !id(sched1_enabled); break;
+                    case 2: id(sched2_enabled) = !id(sched2_enabled); break;
+                    case 3: id(sched3_enabled) = !id(sched3_enabled); break;
+                  }
+                }
+                break;
+              case 3:
+                // Save RTC time
+                {
+                  auto call = id(rtc_time).make_call();
+                  call.set_hours(id(set_hr));
+                  call.set_minutes(id(set_min));
+                  call.set_seconds(0);
+                  call.perform();
+                  id(menu_state) = 0;
+                }
+                break;
+              case 4:
+                // Toggle edit field (hours/minutes)
+                id(edit_field) = 1 - id(edit_field);
+                break;
+            }
+
+  - platform: gpio
+    pin: GP4
+    id: btn_up
+    internal: true
+    filters:
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            switch (id(menu_state)) {
+              case 1:
+                id(manual_duration) = std::min(60, id(manual_duration) + 1);
+                break;
+              case 2:
+                id(sched_cursor) = (id(sched_cursor) + 1) % 4;
+                break;
+              case 3:
+                if (id(edit_field) == 0) id(set_hr) = (id(set_hr) + 1) % 24;
+                else id(set_min) = (id(set_min) + 1) % 60;
+                break;
+              case 5:
+                id(motor_runtime) = std::min(60, id(motor_runtime) + 1);
+                break;
+            }
+
+  - platform: gpio
+    pin: GP5
+    id: btn_down
+    internal: true
+    filters:
+      - debounce: 50ms
+    on_press:
+      then:
+        - lambda: |-
+            switch (id(menu_state)) {
+              case 1:
+                id(manual_duration) = std::max(1, id(manual_duration) - 1);
+                break;
+              case 2:
+                id(sched_cursor) = (id(sched_cursor) + 3) % 4;
+                break;
+              case 3:
+                if (id(edit_field) == 0) id(set_hr) = (id(set_hr) + 23) % 24;
+                else id(set_min) = (id(set_min) + 59) % 60;
+                break;
+              case 5:
+                id(motor_runtime) = std::max(1, id(motor_runtime) - 1);
+                break;
+            }
+
+# ===== BATTERY MONITORING =====
+sensor:
   - platform: adc
-    pin: GPIO5
+    pin: GP6
     id: battery_voltage
     name: "Battery Voltage"
     update_interval: 60s
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
     filters:
       - multiply: 2.0
 
-# CAN Bus (TWAI)
+# ===== CAN BUS =====
 canbus:
   - platform: esp32_can
     id: can_bus
-    tx_pin: GPIO18
-    rx_pin: GPIO21
+    tx_pin: GP21
+    rx_pin: GP22
     can_id: 0x100
     bit_rate: 500kbps
 
-# Status LED
-light:
-  - platform: binary
-    name: "Status LED"
-    output:
-      pin: GPIO6
+# ===== GLOBALS =====
+globals:
+  - id: menu_state
+    type: int
+    initial_value: '0'
+    restore_value: false
+  - id: sched_cursor
+    type: int
+    initial_value: '0'
+    restore_value: false
+  - id: edit_field
+    type: int
+    initial_value: '0'
+    restore_value: false
 
+  - id: feed_active
+    type: bool
+    initial_value: 'false'
+    restore_value: false
+  - id: feed_duration
+    type: int
+    initial_value: '5'
+    restore_value: false
+  - id: feed_remaining
+    type: int
+    initial_value: '0'
+    restore_value: false
+
+  - id: manual_duration
+    type: int
+    initial_value: '5'
+    restore_value: false
+
+  - id: set_hr
+    type: int
+    initial_value: '12'
+    restore_value: false
+  - id: set_min
+    type: int
+    initial_value: '0'
+    restore_value: false
+
+  - id: motor_runtime
+    type: int
+    initial_value: '5'
+    restore_value: true
+  - id: sleep_minutes
+    type: int
+    initial_value: '10'
+    restore_value: true
+
+  # Schedule slots (persistent)
+  - id: sched0_hour
+    type: int
+    initial_value: '8'
+    restore_value: true
+  - id: sched0_min
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: sched0_dur
+    type: int
+    initial_value: '5'
+    restore_value: true
+  - id: sched0_enabled
+    type: bool
+    initial_value: 'true'
+    restore_value: true
+  - id: sched1_hour
+    type: int
+    initial_value: '18'
+    restore_value: true
+  - id: sched1_min
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: sched1_dur
+    type: int
+    initial_value: '5'
+    restore_value: true
+  - id: sched1_enabled
+    type: bool
+    initial_value: 'false'
+    restore_value: true
+  - id: sched2_hour
+    type: int
+    initial_value: '12'
+    restore_value: true
+  - id: sched2_min
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: sched2_dur
+    type: int
+    initial_value: '5'
+    restore_value: true
+  - id: sched2_enabled
+    type: bool
+    initial_value: 'false'
+    restore_value: true
+  - id: sched3_hour
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: sched3_min
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: sched3_dur
+    type: int
+    initial_value: '5'
+    restore_value: true
+  - id: sched3_enabled
+    type: bool
+    initial_value: 'false'
+    restore_value: true
+
+# ===== FEED INTERVAL =====
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(feed_active)) {
+            if (id(feed_remaining) > 0) {
+              id(feed_remaining) = id(feed_remaining) - 1;
+              id(motor_in1).turn_on();
+              id(motor_in2).turn_off();
+            } else {
+              id(feed_active) = false;
+              id(motor_in1).turn_off();
+              id(motor_in2).turn_off();
+            }
+          }
+
+# ===== DEEP SLEEP =====
 deep_sleep:
   run_duration: 10min
   sleep_duration: 10min

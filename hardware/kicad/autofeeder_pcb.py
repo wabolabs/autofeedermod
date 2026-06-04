@@ -66,16 +66,14 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
 
     # Power section — left column
     "F1":         ( 7.00, 13.00, 0),
-    "D1":         ( 8.00, 18.00, 0),
+    "D1":         (16.00, 18.50, 0),   # moved right so anode PTH (pad2 at x-10.16) lands at x≈5.84mm, inside board; Y offset clears U2 courtyard
     "U2":         (14.00, 14.00, 0),
     "LED_CHG1":   ( 8.00, 22.00, 0),
     "R2_C1":      (16.00, 22.00, 0),
     "U3":         (10.00, 28.00, 0),   # DW01A SOT-23-6
-    "U8":         (17.00, 32.00, 0),   # FS8205A SOT-23-6 — moved below U3 to clear U1 pad10
-    "U4":         (13.00, 36.00, 0),   # RT6150A SOT-23-6 (replaces TPS63802)
-    "L1":         ( 6.00, 36.00, 0),   # 4.7uH inductor, SW-to-VOUT
-    "R11":        (20.00, 34.00, 0),   # feedback top 470k
-    "R12":        (20.00, 38.00, 0),   # feedback bot 100k
+    "U8":         (19.00, 35.00, 0),   # FS8205A SOT-23-6
+    "U4":         (13.00, 36.00, 0),   # TPS63031DSKR WSON-10 (fixed 3.3V)
+    "L1":         ( 6.00, 36.00, 0),   # 4.7uH inductor, L1-to-L2
     "C4":         (12.00, 42.00, 0),   # input cap, moved right to clear H2 at (7,43)
     "C5":         (20.00, 42.00, 0),   # output cap
     "R3":         (11.00, 46.00, 0),
@@ -83,8 +81,8 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
 
     # MCU — ESP32-C6-Zero (23×18mm footprint, center at 36,18)
     "U1":         (28.00, 18.00, 0),   # Zero: sweet spot — L-rail X=36.89 (>DISP right pad 35.62), R-rail X=19.11 (<DISP left pad 20.38)
-    "C1":         (32.00, 23.00, 0),   # near U1 3V3 pin (board X=34.9 post-flip)
-    "C2":         (32.00, 26.00, 0),   # near U1 3V3 pin
+    "C1":         (40.00, 23.00, 0),   # near U1 3V3 pin (board X~36.89 post-flip), outside U1 courtyard
+    "C2":         (40.00, 26.00, 0),   # near U1 3V3 pin
 
     "C3":         (35.00, 33.00, 0),   # display decoupling — moved to clear U1 bottom pad19 at (35.62,30.7)
 
@@ -92,7 +90,7 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "U5":         (36.00, 38.00, 0),
 
     # CAN section — relocated inward (center-bottom) to free the right edge for the JSTs
-    "C6":         (39.00, 41.00, 0),   # CAN decoupling near U6
+    "C6":         (46.00, 40.00, 0),   # CAN decoupling — right of U6, clears U6, H4 courtyards
     "U6":         (41.00, 45.00, 0),
     "R5":         (48.00, 46.00, 0),
     "R6":         (42.00, 49.00, 0),
@@ -102,6 +100,10 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
 
     "R_CC1":      (28.00,  3.50, 0),
     "R_CC2":      (34.00,  3.50, 0),
+
+    # RTC and GPS module headers — back side, in free areas
+    "J_RTC":      (14.00, 44.00, 0),  # DS3231 module header (bottom-left)
+    "J_GPS":      (44.00, 14.00, 0),  # GPS module header (top-right)
 }
 
 # Mounting holes (non-plated). Measured in docs/mechanical.md (Y-up); converted to KiCad Y-down.
@@ -336,6 +338,33 @@ def add_silkscreen_labels() -> None:
     board.Save(str(PCB))
 
 
+def _pre_route_vbus(board) -> None:
+    """Stitch J3 VBUS pad groups (A4/B9 at X=32.45 and A9/B4 at X=27.55) with
+    a track above the pad row.  The autorouter struggles to route through the
+    USB-C connector's dense 0.3/0.6 mm pad column, so we give it a head start."""
+    b_cu = pcbnew.B_Cu
+    vbus = board.FindNet("/VBUS") or board.FindNet("VBUS")
+    if vbus is None:
+        return
+
+    def _t(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(pcbnew.FromMM(0.3))
+        t.SetNet(vbus)
+        board.Add(t)
+
+    # Right VBUS pad up, then left+right stitched above the pad row (Y=46.0 is
+    # safely above the top of the pads at Y≈46.73 but below the J3 courtyard
+    # at Y≈46.23; tracks may cross courtyard boundaries to reach pads).
+    _t(32.45, 47.455, 32.45, 46.3)
+    _t(27.55, 47.455, 27.55, 46.3)
+    _t(27.55, 46.3, 32.45, 46.3)
+    print("  pre-routed VBUS stitch across J3 pads")
+
+
 def autoroute() -> None:
     """Export DSN, run Freerouting, import SES."""
     board = pcbnew.LoadBoard(str(PCB))
@@ -350,6 +379,7 @@ def autoroute() -> None:
             board.RemoveNative(z)
         except:
             pass
+    _pre_route_vbus(board)
     board.Save(str(PCB))
 
     if not pcbnew.ExportSpecctraDSN(board, str(DSN)):
@@ -385,7 +415,7 @@ def finish() -> None:
 SILK_HIDE_REF = {"R5", "R6", "R7", "LED_STATUS1"}
 # Edge connectors whose body silk crosses the board edge — drop the redundant silk
 # outline (kept on Fab) and hide the ref.
-SILK_DROP_OUTLINE = {"J3", "D1"}
+SILK_DROP_OUTLINE = {"J3"}  # edge connectors whose silk crosses the board edge
 
 
 def _hide_reference(fp) -> None:
@@ -506,13 +536,19 @@ def pour_ground(board) -> None:
         for x, y in corners:
             outline.Append(int(pcbnew.FromMM(x)), int(pcbnew.FromMM(y)))
         board.Add(zone)
-    # USB-C GND pads carry the shield/return current and are mechanically loaded — give them
-    # a solid zone connection instead of thermal spokes (avoids starved-thermal warnings).
+    # Override zone connection to FULL for pads that only touch the zone through a single
+    # narrow spoke (starved thermals). USB-C GND: shield/return current + mechanical load.
+    # U2 pad 3 (TP4056 GND) and DISP1 pad 2 (OLED GND): single spoke → starved thermal warning.
+    FULL_GND_REFS = {"J3", "U2", "DISP1", "C3", "U1"}
+    full_pad_numbers = {"J3": None, "U2": {"3"}, "DISP1": {"2"}, "C3": {"2"}}
     for fp in board.GetFootprints():
-        if fp.GetReference() == "J3":
+        ref = fp.GetReference()
+        if ref in FULL_GND_REFS:
+            wanted = full_pad_numbers.get(ref)
             for pad in fp.Pads():
                 if pad.GetNetname() == "GND":
-                    pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+                    if wanted is None or pad.GetNumber() in wanted:
+                        pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
     # Actually fill the zones so the pour becomes real copper.
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     print(f"  poured + filled GND on F.Cu + B.Cu")
@@ -578,7 +614,7 @@ def setup() -> None:
     populate()
     print("[3/3] Adding silkscreen labels...")
     add_silkscreen_labels()
-    print(f"  Board ready with 34 footprints at {PCB.relative_to(REPO_ROOT)}")
+    print(f"  Board ready with {len(PLACEMENT)} footprints at {PCB.relative_to(REPO_ROOT)}")
 
 
 def route() -> None:
