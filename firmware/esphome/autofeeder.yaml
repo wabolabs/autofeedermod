@@ -11,20 +11,18 @@ esphome:
 esp32:
   board: esp32-c6-devkitc-1
   framework:
-    type: arduino
+    type: esp-idf
+    version: recommended
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   enable_on_boot: true
 
-matter:
-  enabled: true
-
 # ===== I2C BUS (DS3231 RTC) =====
 i2c:
-  sda: GP13
-  scl: GP23
+  sda: 13
+  scl: 23
   scan: false
   frequency: 100kHz
 
@@ -59,46 +57,39 @@ time:
               }
   - platform: sntp
     id: sntp_time
-    on_time_sync:
-      then:
-        - lambda: |-
-            if (id(sntp_time).now().is_valid()) {
-              id(rtc_time).synchronize(id(sntp_time));
-            }
 
 # ===== GPS (NEO-6M/NEO-8M — Optional) =====
 uart:
-  tx_pin: GP7
-  rx_pin: GP8
+  id: uart_bus
+  tx_pin: 7
+  rx_pin: 8
   baud_rate: 9600
-  id: gps_uart
 
 gps:
-  uart_id: gps_uart
   id: gps_device
+  uart_id: uart_bus
 
 # ===== DISPLAY (SSD1306 128x64 SPI) =====
 spi:
-  clk_pin: GP14
-  mosi_pin: GP15
+  clk_pin: 14
+  mosi_pin: 15
 
 font:
-  - file: "arial.ttf"
+  - file: "gfonts://Roboto"
     id: font_small
     size: 10
-  - file: "arial.ttf"
+  - file: "gfonts://Roboto"
     id: font_medium
     size: 12
-  - file: "arial.ttf"
+  - file: "gfonts://Roboto"
     id: font_large
     size: 16
 
 display:
   - platform: ssd1306_spi
     model: "SSD1306 128x64"
-    cs_pin: GP18
-    dc_pin: GP12
-    reset_pin: GP15
+    cs_pin: 18
+    dc_pin: 12
     rotation: 0
     lambda: |-
       auto now = id(rtc_time).now();
@@ -113,52 +104,26 @@ display:
 
       switch (menu) {
 
-        case 0: // STATUS PAGE
+        case 0:
           if (now.is_valid()) {
-            it.printf(0, 0, id(font_large), "%02d:%02d", now.hour, now.minute);
+            it.strftime(0, 0, id(font_large), "%H:%M", now);
             it.strftime(0, 18, id(font_small), "%a %b %d", now);
           } else {
             it.printf(0, 0, id(font_large), "--:--");
             it.printf(0, 18, id(font_small), "No RTC time");
           }
           it.printf(0, 34, id(font_small), "Bat: %.2fV", id(battery_voltage).state);
-          if (id(gps_device).has_fix()) {
-            it.printf(0, 48, id(font_small), "GPS fix OK");
-          } else {
-            it.printf(0, 48, id(font_small), "GPS: searching");
-          }
-          if (now.is_valid()) {
-            int next_h = -1, next_m = -1;
-            int now_mins = now.hour * 60 + now.minute;
-            for (int slot = 0; slot < 4; slot++) {
-              int h, m, d; bool en;
-              switch (slot) {
-                case 0: h = id(sched0_hour); m = id(sched0_min); d = id(sched0_dur); en = id(sched0_enabled); break;
-                case 1: h = id(sched1_hour); m = id(sched1_min); d = id(sched1_dur); en = id(sched1_enabled); break;
-                case 2: h = id(sched2_hour); m = id(sched2_min); d = id(sched2_dur); en = id(sched2_enabled); break;
-                case 3: h = id(sched3_hour); m = id(sched3_min); d = id(sched3_dur); en = id(sched3_enabled); break;
-              }
-              if (!en || d <= 0) continue;
-              int slot_mins = h * 60 + m;
-              if (slot_mins > now_mins && (next_h < 0 || slot_mins < next_h * 60 + next_m)) {
-                next_h = h; next_m = m;
-              }
-            }
-            if (next_h >= 0) {
-              it.printf(76, 0, id(font_small), "Next:");
-              it.printf(76, 14, id(font_medium), "%02d:%02d", next_h, next_m);
-            }
-          }
           break;
 
-        case 1: // MANUAL FEED
+        case 1:
+          if (id(feed_active)) break;
           it.printf(0, 0, id(font_medium), "MANUAL FEED");
           it.printf(0, 18, id(font_small), "Duration: %ds", id(manual_duration));
           it.printf(0, 34, id(font_small), "UP/DN: adjust");
           it.printf(0, 50, id(font_small), "MANUAL: start");
           break;
 
-        case 2: // SCHEDULE LIST
+        case 2:
           it.printf(0, 0, id(font_medium), "Schedules");
           for (int i = 0; i < 4; i++) {
             int h, m, d; bool en;
@@ -169,37 +134,26 @@ display:
               case 3: h = id(sched3_hour); m = id(sched3_min); d = id(sched3_dur); en = id(sched3_enabled); break;
             }
             int y = 14 + i * 12;
-            if (id(sched_cursor) == i) it.strftime(0, y, id(font_small), ">");
+            if (id(sched_cursor) == i) it.print(0, y, id(font_small), ">");
             it.printf(8, y, id(font_small), "S%d %s %02d:%02d %ds",
                       i + 1, en ? "ON " : "OFF", h, m, d);
           }
           break;
 
-        case 3: // SET RTC TIME
-          it.printf(0, 0, id(font_medium), "Set RTC Time");
-          it.printf(0, 18, id(font_small), "Hr: %02d    Min: %02d",
-                    id(set_hr), id(set_min));
-          if (id(edit_field) == 0)
-            it.printf(0, 34, id(font_small), "EDIT: hours");
-          else
-            it.printf(0, 34, id(font_small), "EDIT: minutes");
-          it.printf(0, 50, id(font_small), "SETTINGS: save");
-          break;
-
-        case 4: // GPS STATUS
-          it.printf(0, 0, id(font_medium), "GPS Status");
-          if (id(gps_device).has_fix()) {
-            it.printf(0, 18, id(font_small), "Fix: 3D");
-          } else {
-            it.printf(0, 18, id(font_small), "No fix");
+        case 3:
+          {
+            auto &tgps = id(gps_device).get_tiny_gps();
+            it.printf(0, 0, id(font_medium), "GPS Status");
+            it.printf(0, 18, id(font_small), "Sats: %d", tgps.satellites.value());
+            it.printf(0, 34, id(font_small), "Lat: %.4f", tgps.location.lat());
+            it.printf(0, 50, id(font_small), "Lon: %.4f", tgps.location.lng());
           }
           break;
 
-        case 5: // SETTINGS
+        case 4:
           it.printf(0, 0, id(font_medium), "Settings");
           it.printf(0, 18, id(font_small), "Motor run: %ds", id(motor_runtime));
-          it.printf(0, 34, id(font_small), "Sleep: %dm", id(sleep_minutes));
-          it.printf(0, 50, id(font_small), "UP/DN: adjust");
+          it.printf(0, 34, id(font_small), "UP/DN: adjust");
           break;
       }
 
@@ -217,11 +171,11 @@ switch:
 # ===== BUTTONS =====
 binary_sensor:
   - platform: gpio
-    pin: GP0
+    pin: 0
     id: btn_power
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
@@ -230,24 +184,24 @@ binary_sensor:
             else { id(menu_state) = 0; }
 
   - platform: gpio
-    pin: GP1
+    pin: 1
     id: btn_timer
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
             int m = id(menu_state);
-            m = (m + 1) % 6;
+            m = (m + 1) % 5;
             id(menu_state) = m;
 
   - platform: gpio
-    pin: GP2
+    pin: 2
     id: btn_manual
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
@@ -262,20 +216,19 @@ binary_sensor:
             }
 
   - platform: gpio
-    pin: GP3
+    pin: 3
     id: btn_settings
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
             switch (id(menu_state)) {
               case 0:
-                id(menu_state) = 5;
+                id(menu_state) = 4;
                 break;
               case 2:
-                // Toggle selected schedule enabled/disabled
                 {
                   int s = id(sched_cursor);
                   switch (s) {
@@ -287,28 +240,16 @@ binary_sensor:
                 }
                 break;
               case 3:
-                // Save RTC time
-                {
-                  auto call = id(rtc_time).make_call();
-                  call.set_hours(id(set_hr));
-                  call.set_minutes(id(set_min));
-                  call.set_seconds(0);
-                  call.perform();
-                  id(menu_state) = 0;
-                }
-                break;
-              case 4:
-                // Toggle edit field (hours/minutes)
-                id(edit_field) = 1 - id(edit_field);
+                id(menu_state) = 0;
                 break;
             }
 
   - platform: gpio
-    pin: GP4
+    pin: 4
     id: btn_up
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
@@ -320,20 +261,18 @@ binary_sensor:
                 id(sched_cursor) = (id(sched_cursor) + 1) % 4;
                 break;
               case 3:
-                if (id(edit_field) == 0) id(set_hr) = (id(set_hr) + 1) % 24;
-                else id(set_min) = (id(set_min) + 1) % 60;
                 break;
-              case 5:
+              case 4:
                 id(motor_runtime) = std::min(60, id(motor_runtime) + 1);
                 break;
             }
 
   - platform: gpio
-    pin: GP5
+    pin: 5
     id: btn_down
     internal: true
     filters:
-      - debounce: 50ms
+      - delayed_on_off: 50ms
     on_press:
       then:
         - lambda: |-
@@ -345,10 +284,8 @@ binary_sensor:
                 id(sched_cursor) = (id(sched_cursor) + 3) % 4;
                 break;
               case 3:
-                if (id(edit_field) == 0) id(set_hr) = (id(set_hr) + 23) % 24;
-                else id(set_min) = (id(set_min) + 59) % 60;
                 break;
-              case 5:
+              case 4:
                 id(motor_runtime) = std::max(1, id(motor_runtime) - 1);
                 break;
             }
@@ -356,7 +293,7 @@ binary_sensor:
 # ===== BATTERY MONITORING =====
 sensor:
   - platform: adc
-    pin: GP6
+    pin: 6
     id: battery_voltage
     name: "Battery Voltage"
     update_interval: 60s
@@ -369,8 +306,8 @@ sensor:
 canbus:
   - platform: esp32_can
     id: can_bus
-    tx_pin: GP21
-    rx_pin: GP22
+    tx_pin: 21
+    rx_pin: 22
     can_id: 0x100
     bit_rate: 500kbps
 
@@ -384,11 +321,6 @@ globals:
     type: int
     initial_value: '0'
     restore_value: false
-  - id: edit_field
-    type: int
-    initial_value: '0'
-    restore_value: false
-
   - id: feed_active
     type: bool
     initial_value: 'false'
@@ -407,22 +339,9 @@ globals:
     initial_value: '5'
     restore_value: false
 
-  - id: set_hr
-    type: int
-    initial_value: '12'
-    restore_value: false
-  - id: set_min
-    type: int
-    initial_value: '0'
-    restore_value: false
-
   - id: motor_runtime
     type: int
     initial_value: '5'
-    restore_value: true
-  - id: sleep_minutes
-    type: int
-    initial_value: '10'
     restore_value: true
 
   # Schedule slots (persistent)
@@ -491,8 +410,32 @@ globals:
     initial_value: 'false'
     restore_value: true
 
-# ===== FEED INTERVAL =====
+# ===== PERIODIC TASKS =====
 interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          auto &tgps = id(gps_device).get_tiny_gps();
+          if (tgps.time.isValid() && tgps.date.isValid() &&
+              tgps.location.age() < 10000 && tgps.time.age() < 10000) {
+            auto now = id(rtc_time).now();
+            if (!now.is_valid()) {
+              struct tm t = {};
+              t.tm_year = tgps.date.year() - 1900;
+              t.tm_mon = tgps.date.month() - 1;
+              t.tm_mday = tgps.date.day();
+              t.tm_hour = tgps.time.hour();
+              t.tm_min = tgps.time.minute();
+              t.tm_sec = tgps.time.second();
+              setenv("TZ", "UTC0", 1);
+              tzset();
+              time_t epoch = mktime(&t);
+              struct timeval tv = {.tv_sec = epoch, .tv_usec = 0};
+              settimeofday(&tv, nullptr);
+              id(rtc_time).write_time();
+            }
+          }
+
   - interval: 1s
     then:
       - lambda: |-
@@ -507,8 +450,3 @@ interval:
               id(motor_in2).turn_off();
             }
           }
-
-# ===== DEEP SLEEP =====
-deep_sleep:
-  run_duration: 10min
-  sleep_duration: 10min

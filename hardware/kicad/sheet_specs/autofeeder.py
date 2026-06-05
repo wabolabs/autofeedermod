@@ -37,6 +37,7 @@ FP_SW_TACT = "Button_Switch_SMD:SW_Push_1P1T_NO_CK_KMR2"
 FP_ESP = "autofeeder:ESP32_C6_Zero"    # 2.54mm TH socket for Waveshare ESP32-C6-Zero
 FP_SOT23_6_HS = "Package_TO_SOT_SMD:SOT-23-6_Handsoldering"
 FP_L_0805 = "Inductor_SMD:L_0805_2012Metric"
+FP_WSON10_TPS63031 = "Package_SON:WSON-10-1EP_2.5x2.5mm_P0.5mm_EP1.2x2mm"
 
 
 def build() -> Sheet:
@@ -143,7 +144,7 @@ def build() -> Sheet:
     # U4: TPS63031DSKR buck-boost (WSON-10, fixed 3.3V output)
     # Fixed 3.3V output — no feedback resistors needed. Pinout per DSK package:
     # 1=VOUT, 2=L2, 3=PGND, 4=L1, 5=VIN, 6=EN, 7=PS/SYNC, 8=VINA, 9=GND, 10=FB
-    u4 = s.add("U4", "autofeeder:TPS63031DSKR", "TPS63031DSKR", at=(55, 150))
+    u4 = s.add("U4", "autofeeder:TPS63031DSKR", "TPS63031DSKR", at=(55, 150), footprint=FP_WSON10_TPS63031)
     label_pins(u4, {"5": "BATT_PROT",   # VIN
                     "8": "BATT_PROT",   # VINA
                     "6": "BATT_PROT",   # EN (tie to input to always enable)

@@ -102,8 +102,8 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "R_CC2":      (34.00,  3.50, 0),
 
     # RTC and GPS module headers — back side, in free areas
-    "J_RTC":      (14.00, 44.00, 0),  # DS3231 module header (bottom-left)
-    "J_GPS":      (44.00, 14.00, 0),  # GPS module header (top-right)
+    "J_RTC1":     (28.00, 36.00, 0),  # DS3231 module header (below U1 I2C pads, back side under OLED)
+    "J_GPS1":     (44.00, 14.00, 0),  # GPS module header (top-right)
 }
 
 # Mounting holes (non-plated). Measured in docs/mechanical.md (Y-up); converted to KiCad Y-down.
