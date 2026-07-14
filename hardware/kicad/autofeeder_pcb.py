@@ -563,18 +563,38 @@ def _pre_route_batt_n(board) -> None:
         t.SetNet(net)
         board.Add(t)
 
-    # B.Cu: U3 pad 6 → U3 pad 2 → U8 pad 2
-    _seg(8.65, 27.05, 11.35, 28.0)    # U3 pad 6 → U3 pad 2
-    _seg(11.35, 28.0, 17.0, 28.0)     # right from U3 pad 2
-    _seg(17.0, 28.0, 17.0, 33.3)      # down through OC/OD gate gap
-    _seg(17.0, 33.3, 22.0, 33.3)      # right above U8 pads
-    _seg(22.0, 33.3, 22.0, 35.0)      # down right of U8
-    _seg(22.0, 35.0, 20.35, 35.0)     # left into U8 pad 2
+    # B.Cu: U3 pad 6 → U3 pad 2 → U8 pad 2.
+    # The old path ran right at y=33.3 straight to x=22, crossing OD_GATE's x=20.35
+    # vertical (y32.5-34.05) at (20.35,33.3) — a hard OD_GATE/BATT_N short on B.Cu.
+    # Keep the high path (so the GND pour still flows through the U8 inter-column gap and
+    # feeds the U8-5 GND pocket) but hop OVER the OD_GATE vertical on F.Cu for a short
+    # span with two through-vias. The hop zone (x19.5..21.2, y33.3) is clear on F/In1/In2.
+    _seg(8.65, 27.05, 11.35, 28.0)     # U3 pad 6 → U3 pad 2
+    _seg(11.35, 28.0, 17.0, 28.0)      # right from U3 pad 2
+    _seg(17.0, 28.0, 17.0, 33.3)       # down through OC/OD gate gap
+    _seg(17.0, 33.3, 19.5, 33.3)       # right on B.Cu, stop before OD_GATE (x=20.35)
+    _seg(19.5, 33.3, 21.2, 33.3, pcbnew.F_Cu)  # F.Cu hop over the OD_GATE B.Cu vertical
+    _seg(21.2, 33.3, 22.0, 33.3)       # back on B.Cu, past OD_GATE
+    _seg(22.0, 33.3, 22.0, 35.0)       # down right of U8
+    _seg(22.0, 35.0, 20.35, 35.0)      # left into U8 pad 2
+    for _hx in (19.5, 21.2):           # B.Cu <-> F.Cu transition vias for the hop
+        _hv = pcbnew.PCB_VIA(board)
+        _hv.SetPosition(pcbnew.VECTOR2I_MM(_hx, 33.3))
+        _hv.SetDrill(pcbnew.FromMM(0.3))
+        _hv.SetWidth(pcbnew.FromMM(0.6))
+        _hv.SetNet(net)
+        _hv.SetViaType(pcbnew.VIATYPE_THROUGH)
+        board.Add(_hv)
     # B.Cu: via → U8 pad 2 (connects the J1 F.Cu chain to U8 cluster)
     _seg(21.5561, 35.4863, 20.35, 35.0)
-    # F.Cu: J1 pad 2 → via (connects to U8 B.Cu cluster)
-    _seg(52.0, 31.5, 52.0, 32.6, pcbnew.F_Cu)
-    _seg(52.0, 32.6, 49.69, 33.81, pcbnew.F_Cu)
+    # F.Cu: J1 pad 2 → via (connects to U8 B.Cu cluster).
+    # J1 pad 1 (BATT_P) sits at (52,34) spanning x51-53 / y33.15-34.85. Exit pad 2
+    # (52,31.5) straight left at y=31.5 (still in pad 2's own y-band), then drop down
+    # at x=49.69 — left of pad 1's x=51 edge — so the trace never grazes BATT_P. The
+    # old diagonal (52,32.6)->(49.69,33.81) clipped pad 1's top-left corner (a hard
+    # BATT_N/BATT_P short + solder-mask bridge).
+    _seg(52.0, 31.5, 49.69, 31.5, pcbnew.F_Cu)
+    _seg(49.69, 31.5, 49.69, 33.81, pcbnew.F_Cu)
     _seg(49.69, 33.81, 23.2324, 33.81, pcbnew.F_Cu)
     _seg(23.2324, 33.81, 21.5561, 35.4863, pcbnew.F_Cu)
     # Via at the F.Cu/B.Cu transition — connects the J1 F.Cu chain to the
