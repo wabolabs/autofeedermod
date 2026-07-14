@@ -9,6 +9,7 @@ Requires: KiCad 9.0+, kicad-cli, freerouting on PATH
 
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 import sys
@@ -60,9 +61,10 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     # === BACK SIDE ===
     # Connectors on board edges (match original: USB-C bottom, JSTs + prog header on right edge).
     "J3":         (30.00, 51.50, 0),   # USB-C, bottom edge (user y=2.5 -> kicad 51.5)
-    "J2":         (52.00, 16.00, 90),  # motor JST, right edge upper, facing left (inward)
-    "J1":         (52.00, 30.00, 90),  # battery JST, right edge lower, facing left (inward)
-    "J4":         (53.00, 37.00, 0),   # prog header, right edge below JSTs (like original J11)
+    "J1":         (52.00, 34.00, 90),  # battery JST, right edge, facing left (inward)
+    "J_MOTOR_PWR1": (52.00, 24.00, 90), # MX1508 power (BATT_PROT/GND), right edge, above BATT
+    "J_MOTOR_CTRL1":(52.00, 14.00, 90), # MX1508 control (IN1/IN2), right edge, above J_MOTOR_PWR
+    "J4":         (53.00, 39.00, 0),   # prog header, right edge below JSTs (like original J11)
 
     # Power section — left column
     "F1":         ( 7.00, 13.00, 0),
@@ -87,7 +89,6 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "C3":         (35.00, 33.00, 0),   # display decoupling — moved to clear U1 bottom pad19 at (35.62,30.7)
 
     # Motor driver
-    "U5":         (36.00, 38.00, 0),
 
     # CAN section — relocated inward (center-bottom) to free the right edge for the JSTs
     "C6":         (46.00, 40.00, 0),   # CAN decoupling — right of U6, clears U6, H4 courtyards
@@ -102,8 +103,9 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "R_CC2":      (34.00,  3.50, 0),
 
     # RTC and GPS module headers — back side, in free areas
-    "J_RTC1":     (28.00, 36.00, 0),  # DS3231 module header (below U1 I2C pads, back side under OLED)
+    "J_RTC1":     (42.00, 30.00, 0),  # DS3231 module header (right of center, clear of SW5 at X=28)
     "J_GPS1":     (44.00, 14.00, 0),  # GPS module header (top-right)
+    "WABO_LOGO1": (30.00, 36.00, 0),  # Wabo Labs logo silkscreen (back side, centered below ESP32-C6-Zero)
 }
 
 # Mounting holes (non-plated). Measured in docs/mechanical.md (Y-up); converted to KiCad Y-down.
@@ -140,9 +142,14 @@ def _ref_name(node) -> str:
 
 
 def create_board() -> None:
-    """Create a fresh 2-layer board with the 56×54mm outline."""
+    """Create a fresh 4-layer board with the 56×54mm outline.
+
+    4 layers (F.Cu, In1.Cu, In2.Cu, B.Cu) — the 2-layer version could not route the
+    dense U3/U4/U8 protection+WSON corner and the USB-C cluster (BATT_N, BATT_PROT, CC2,
+    VBUS stayed stuck). The two extra layers give Freerouting the capacity it needs; GND
+    is poured on all four and tied together with stitching vias."""
     board = pcbnew.CreateEmptyBoard()
-    board.SetCopperLayerCount(2)
+    board.SetCopperLayerCount(4)
     # Set default netclass clearance to 0.15mm — within JLCPCB's 0.127mm capability and
     # needed because the Zero socket rails are 1.27mm from the OLED header outer pads.
     bds = board.GetDesignSettings()
@@ -276,6 +283,28 @@ def populate() -> None:
             fp.Flip(fp.GetPosition(), False)
         placed += 1
 
+    # Place silkscreen-only logo (not in schematic netlist, only in PLACEMENT)
+    logo_ref = "WABO_LOGO1"
+    if logo_ref in PLACEMENT:
+        fp_tup = _resolve_fp("autofeeder:Wabo_Labs_Logo")
+        if fp_tup is None:
+            print("    WARN: Wabo_Labs_Logo footprint not found; skipping")
+        else:
+            lib_dir, fp_name = fp_tup
+            fp = pcbnew.FootprintLoad(str(lib_dir), fp_name)
+            if fp is None:
+                print(f"    WARN: failed to load Wabo_Labs_Logo footprint")
+            else:
+                x, y, rot = PLACEMENT[logo_ref]
+                fp.SetReference(logo_ref)
+                fp.SetPosition(pcbnew.VECTOR2I_MM(x, y))
+                if rot:
+                    fp.SetOrientationDegrees(rot)
+                board.Add(fp)
+                if logo_ref in BACK_COMPONENTS:
+                    fp.Flip(fp.GetPosition(), False)
+                placed += 1
+
     board.Save(str(PCB))
     print(f"  placed {placed} footprints")
     if errors:
@@ -293,7 +322,7 @@ def add_silkscreen_labels() -> None:
     # Connector labels: ref -> text. Offset is "above" in the connector's local frame
     # (i.e. perpendicular to the JST insertion axis), transformed by the footprint's
     # actual orientation so it tracks the connector when it is rotated/flipped.
-    labels = {"J1": "BATT", "J2": "MOTOR"}
+    labels = {"J1": "BATT", "J_MOTOR_PWR1": "PWR", "J_MOTOR_CTRL1": "CTRL"}
     local_above_mm = 4.5  # distance above the connector body in its local frame (clears the JST body)
 
     for ref, text in labels.items():
@@ -365,6 +394,201 @@ def _pre_route_vbus(board) -> None:
     print("  pre-routed VBUS stitch across J3 pads")
 
 
+def _pre_route_l2_node(board) -> None:
+    """Pre-route L2_NODE. VCC_3V3 will be autorouted around it."""
+    net = board.FindNet("/L2_NODE") or board.FindNet("L2_NODE")
+    if net is None:
+        return
+    b_cu = pcbnew.B_Cu
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    # B.Cu: L1 pad 2 → up → left to the board's left edge → down → right along the
+    # bottom → straight up in the U4/U8 gap (x=15.5) → left into U4-2 at y=35.5.
+    # A straight vertical (no diagonal) keeps a solid 0.4mm off the OC_GATE track in
+    # the same narrow gap. The final y=35.5 entry stays equidistant (0.225mm) from
+    # U4-1 VCC_3V3 (y=35.00) and U4-3 GND (y=36.00) on the 0.5mm-pitch WSON edge —
+    # a diagonal entry grazes U4-1.
+    _seg(4.9375, 36.0, 4.9375, 33.0)
+    _seg(4.9375, 33.0, 2.0, 33.0)
+    _seg(2.0, 33.0, 2.0, 40.5)
+    _seg(2.0, 40.5, 15.5, 40.5)
+    _seg(15.5, 40.5, 15.5, 35.5)
+    _seg(15.5, 35.5, 14.21, 35.5)
+    print("  pre-routed L2_NODE: L1-2 → U4-2")
+
+
+def _pre_route_oc_gate(board) -> None:
+    net = board.FindNet("/OC_GATE") or board.FindNet("OC_GATE")
+    if net is None:
+        return
+    b_cu = pcbnew.B_Cu
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    # U3-3 (11.35,28.95) → down clear of U1 → right below U1 → down in the U4/U8
+    # gap → into U8-4 from the left. Stays x<=16.35 to clear U8.6/U8.5 (left edge
+    # 16.87) and x>=15.8 to clear U4 (right pad edge 14.62).
+    _seg(11.35, 28.95, 11.35, 32.5)
+    _seg(11.35, 32.5, 16.2, 32.5)
+    _seg(16.2, 32.5, 16.2, 35.95)
+    _seg(16.2, 35.95, 17.65, 35.95)
+    print("  pre-routed OC_GATE: U3-3 → U8-4")
+
+
+def _pre_route_od_gate(board) -> None:
+    net = board.FindNet("/OD_GATE") or board.FindNet("OD_GATE")
+    if net is None:
+        return
+    b_cu = pcbnew.B_Cu
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    # U3-1 (11.35,27.05) → up over U3 pad row → right, stopping at x=18.0 (before the
+    # U1 right rail at x=19.11) → down left of the rail & BAT_MON (20.38,30.70) to below
+    # U1 → right → down into U8-1. Keeps >=0.15mm off U1.11/U1.10/U1.25.
+    _seg(11.35, 27.05, 11.35, 26.2)
+    _seg(11.35, 26.2, 18.0, 26.2)
+    _seg(18.0, 26.2, 18.0, 32.5)
+    _seg(18.0, 32.5, 20.35, 32.5)
+    _seg(20.35, 32.5, 20.35, 34.05)
+    print("  pre-routed OD_GATE: U3-1 → U8-1")
+
+
+def _pre_route_l1_node(board) -> None:
+    """L1-1 (7.0625,36.0) → U4-4 (14.2125,36.5). Freerouting can't finish this into the
+    dense TPS63031 WSON, so route it explicitly: down from L1, right along the bottom,
+    then up the U4/U8 gap in the slot inside the L2_NODE pre-route (x=14.95, between
+    U4's right pad edge 14.62 and L2's vertical at x=15.5) and left into pad 4 at y=36.5
+    (0.225mm off U4-3 GND and U4-5 BATT_PROT)."""
+    net = board.FindNet("/L1_NODE") or board.FindNet("L1_NODE")
+    if net is None:
+        return
+    b_cu = pcbnew.B_Cu
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    _seg(7.0625, 36.0, 7.0625, 39.0)
+    _seg(7.0625, 39.0, 14.95, 39.0)
+    _seg(14.95, 39.0, 14.95, 36.5)
+    _seg(14.95, 36.5, 14.2125, 36.5)
+    print("  pre-routed L1_NODE: L1-1 → U4-4")
+
+
+def _pre_route_u4_gnd(board) -> None:
+    """U4 (WSON-10) left GND pads 7 (11.7875,36.5) and 9 (11.7875,35.5) sit in a pocket
+    walled off from the GND pour by the adjacent BATT_PROT/VCC_3V3 pads (0.5mm pitch), so
+    their local fill becomes an isolated island. Pull each straight out to the left with a
+    short GND stub into the open main pour, staying 0.225mm off the y-adjacent pads."""
+    net = board.FindNet("GND")
+    if net is None:
+        return
+    b_cu = pcbnew.B_Cu
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(b_cu)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    # Pull pad 9 straight left into the large left-side pour, and pad 7 left then up to
+    # the same point (its own y=36.5 level is a separate pocket below that pour). The
+    # stitching vias later tie this pour region to the F.Cu ground backbone.
+    _seg(11.7875, 35.5, 9.5, 35.5)   # pad 9 → left pour
+    _seg(11.7875, 36.5, 9.5, 36.5)   # pad 7 → left
+    _seg(9.5, 36.5, 9.5, 35.5)       # → up into the pour with pad 9
+    print("  pre-routed U4 GND: pads 7,9 → left pour")
+
+
+def _pre_route_batt_n(board) -> None:
+    """Route the full BATT_N net on B.Cu + F.Cu.
+
+    Without this, Freerouting leaves BATT_N split into disconnected islands —
+    it can't route through the OC_GATE / OD_GATE corridor on B.Cu, and the
+    long F.Cu chain from J1 doesn't complete within 15 passes.
+
+    B.Cu segments:
+      U3 pad 6 (8.65,27.05) → U3 pad 2 (11.35,28) → right → down through
+      OC/OD gate gap → right above U8 → down right of U8 → U8 pad 2 (20.35,35)
+    F.Cu segments:
+      J1 pad 2 (52,31.5) → down → right → diagonal → via (21.5561,35.4863)
+    """
+    net = board.FindNet("/BATT_N") or board.FindNet("BATT_N")
+    if net is None:
+        return
+    w = pcbnew.FromMM(0.3)
+
+    def _seg(x1, y1, x2, y2, layer=pcbnew.B_Cu):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I_MM(x1, y1))
+        t.SetEnd(pcbnew.VECTOR2I_MM(x2, y2))
+        t.SetLayer(layer)
+        t.SetWidth(w)
+        t.SetNet(net)
+        board.Add(t)
+
+    # B.Cu: U3 pad 6 → U3 pad 2 → U8 pad 2
+    _seg(8.65, 27.05, 11.35, 28.0)    # U3 pad 6 → U3 pad 2
+    _seg(11.35, 28.0, 17.0, 28.0)     # right from U3 pad 2
+    _seg(17.0, 28.0, 17.0, 33.3)      # down through OC/OD gate gap
+    _seg(17.0, 33.3, 22.0, 33.3)      # right above U8 pads
+    _seg(22.0, 33.3, 22.0, 35.0)      # down right of U8
+    _seg(22.0, 35.0, 20.35, 35.0)     # left into U8 pad 2
+    # B.Cu: via → U8 pad 2 (connects the J1 F.Cu chain to U8 cluster)
+    _seg(21.5561, 35.4863, 20.35, 35.0)
+    # F.Cu: J1 pad 2 → via (connects to U8 B.Cu cluster)
+    _seg(52.0, 31.5, 52.0, 32.6, pcbnew.F_Cu)
+    _seg(52.0, 32.6, 49.69, 33.81, pcbnew.F_Cu)
+    _seg(49.69, 33.81, 23.2324, 33.81, pcbnew.F_Cu)
+    _seg(23.2324, 33.81, 21.5561, 35.4863, pcbnew.F_Cu)
+    # Via at the F.Cu/B.Cu transition — connects the J1 F.Cu chain to the
+    # U8 B.Cu cluster (U8 pad 2 is 1.14mm away via existing B.Cu tracks).
+    via = pcbnew.PCB_VIA(board)
+    via.SetPosition(pcbnew.VECTOR2I_MM(21.5561, 35.4863))
+    via.SetDrill(pcbnew.FromMM(0.3))
+    via.SetWidth(pcbnew.FromMM(0.6))
+    via.SetNet(net)
+    via.SetViaType(pcbnew.VIATYPE_THROUGH)
+    board.Add(via)
+    print("  pre-routed BATT_N: U3-6 → U3-2 → U8-2; J1 → via")
+
+
 def autoroute() -> None:
     """Export DSN, run Freerouting, import SES."""
     board = pcbnew.LoadBoard(str(PCB))
@@ -379,7 +603,15 @@ def autoroute() -> None:
             board.RemoveNative(z)
         except:
             pass
-    _pre_route_vbus(board)
+    # _pre_route_vbus was a 2-layer hack to force VBUS through J3's dense pad column;
+    # on 4 layers it locks the access and leaves VBUS unrouted. Let the router handle it.
+    _pre_route_l2_node(board)
+    _pre_route_oc_gate(board)
+    _pre_route_od_gate(board)
+    _pre_route_l1_node(board)
+    _pre_route_batt_n(board)
+    # With U4's EP tied to GND and inner GND planes, the WSON GND pads via straight down;
+    # the old lateral GND escape traces just boxed in U4.8 (BATT_PROT), so they're dropped.
     board.Save(str(PCB))
 
     if not pcbnew.ExportSpecctraDSN(board, str(DSN)):
@@ -396,23 +628,115 @@ def autoroute() -> None:
     print(f"  routed -> {SES.stat().st_size}b SES")
 
 
+def _deduplicate_prerouted(board) -> None:
+    """Remove exact duplicate track segments left by the SES round-trip (pre-routed
+    segments can come back doubled). Geometry-keyed over every net, so it covers all
+    pre-routed nets (L2_NODE, OC_GATE, OD_GATE, L1_NODE, GND stubs) without hardcoding
+    net codes, which are not stable."""
+    seen = {}
+    for t in list(board.GetTracks()):
+        if t.Type() != pcbnew.PCB_TRACE_T:
+            continue
+        s = t.GetStart(); e = t.GetEnd()
+        pts = tuple(sorted([(s.x, s.y), (e.x, e.y)]))
+        key = (t.GetNetCode(), pts, t.GetLayer())
+        if key in seen:
+            try: board.RemoveNative(t)
+            except: pass
+        else:
+            seen[key] = True
+
+
 def finish() -> None:
     """Import routes, pour GND on both layers, save."""
     board = pcbnew.LoadBoard(str(PCB))
     if not pcbnew.ImportSpecctraSES(board, str(SES)):
         raise RuntimeError("ImportSpecctraSES failed")
+    _deduplicate_prerouted(board)
     segs = sum(1 for t in board.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T)
     vias = sum(1 for t in board.GetTracks() if t.Type() == pcbnew.PCB_VIA_T)
     print(f"  imported {segs} segments + {vias} vias")
 
     pour_ground(board)
+    add_stitching_vias(board)
     board.Save(str(PCB))
     cleanup_silk()
 
 
+def add_stitching_vias(board) -> None:
+    """Tie the per-layer GND pours together with through stitching vias so the ground
+    net is one connected plane (each layer's pour gets chopped into islands by signal
+    traces, and a through-via must clear the traces on every layer it passes).
+
+    A via is placed only where its whole annulus + clearance ring (radius 0.5mm) lies
+    inside the GND fill on EVERY GND layer — since each fill already respects clearance
+    from that layer's non-GND pads/tracks, that guarantees the through-via cannot short
+    anything, without per-obstacle distance math. Zones are refilled afterward."""
+    gnd = board.FindNet("GND")
+    if gnd is None:
+        return
+    fills = []
+    for z in board.Zones():
+        if z.GetNetname() == "GND":
+            fills.append(z.GetFilledPolysList(z.GetLayer()))
+    if not fills:
+        return
+
+    r = pcbnew.FromMM(0.5)   # via radius (0.3) + clearance margin (0.2)
+    offs = [(0, 0)] + [(int(r * math.cos(a)), int(r * math.sin(a)))
+                       for a in [i * math.pi / 4 for i in range(8)]]
+
+    # Keep the via drill away from other drilled holes (min hole-to-hole). A stitch via's
+    # hole (0.3mm) must sit >= 0.3mm edge-to-edge from any pad hole; store (x, y, keepout)
+    # where keepout = via_hole_r (0.15) + pad_hole_r + 0.3mm margin.
+    via_hole_r = pcbnew.FromMM(0.15)
+    holes = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            ds = pad.GetDrillSize()
+            if ds.x > 0:
+                pos = pad.GetPosition()
+                keep = via_hole_r + ds.x // 2 + pcbnew.FromMM(0.3)
+                holes.append((pos.x, pos.y, keep))
+
+    def _clear(px, py):
+        for hx, hy, keep in holes:
+            if abs(px - hx) < keep and abs(py - hy) < keep:
+                if (px - hx) ** 2 + (py - hy) ** 2 < keep * keep:
+                    return False
+        for dx, dy in offs:
+            q = pcbnew.VECTOR2I(px + dx, py + dy)
+            if not all(f.Contains(q) for f in fills):
+                return False
+        return True
+
+    bb = board.GetBoardEdgesBoundingBox()
+    step = pcbnew.FromMM(2.2)
+    placed = 0
+    y = bb.GetTop()
+    while y <= bb.GetBottom():
+        x = bb.GetLeft()
+        while x <= bb.GetRight():
+            if _clear(x, y):
+                v = pcbnew.PCB_VIA(board)
+                v.SetPosition(pcbnew.VECTOR2I(x, y))
+                v.SetDrill(pcbnew.FromMM(0.3))
+                v.SetWidth(pcbnew.FromMM(0.6))
+                v.SetNet(gnd)
+                board.Add(v)
+                placed += 1
+            x += step
+        y += step
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    print(f"  stitched GND with {placed} vias")
+
+
 # Silkscreen reference labels that overlap copper or each other in the dense back-side
 # cluster — hidden on silk (they remain on the Fab layer for assembly).
-SILK_HIDE_REF = {"R5", "R6", "R7", "LED_STATUS1"}
+SILK_HIDE_REF = {"R5", "R6", "R7", "LED_STATUS1",
+                 # dense back-side cluster — ref labels overlapping copper or each other
+                 "U1", "U2", "D1", "C3", "J1", "J4", "R_CC1", "LED_CHG1",
+                 "J_MOTOR_PWR1", "J_MOTOR_CTRL1"}
 # Edge connectors whose body silk crosses the board edge — drop the redundant silk
 # outline (kept on Fab) and hide the ref.
 SILK_DROP_OUTLINE = {"J3"}  # edge connectors whose silk crosses the board edge
@@ -511,24 +835,31 @@ def cleanup_silk() -> None:
     print(f"  cleaned silkscreen ({len(SILK_HIDE_REF)} refs hidden, {dropped} silk shapes dropped)")
 
 
-def pour_ground(board) -> None:
-    """Pour GND copper on both layers and fill the zones.
+def GND_LAYERS():
+    """Copper layers that carry a GND pour (all four on this 4-layer board)."""
+    return [pcbnew.F_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.B_Cu]
 
-    Note: no blind stitching vias — dropping vias on a fixed grid drops them on
-    top of signal tracks/pads (shorts) on a dense board. The filled zones plus the
-    GND pad/via connections give a solid ground; add manual stitching later if needed.
+
+def pour_ground(board) -> None:
+    """Pour GND copper on all four layers and fill the zones.
+
+    Stitching vias (see add_stitching_vias) tie the per-layer pours together; the inner
+    In1/In2 pours give a near-solid ground reference between the two signal layers.
     """
     gnd = board.FindNet("GND")
-    for layer in [pcbnew.F_Cu, pcbnew.B_Cu]:
+    for layer in GND_LAYERS():
         zone = pcbnew.ZONE(board)
         zone.SetLayer(layer)
         if gnd:
             zone.SetNet(gnd)
         zone.SetMinThickness(pcbnew.FromMM(0.15))
-        zone.SetLocalClearance(pcbnew.FromMM(0.5))  # 0.5mm keeps fill out of 1.27mm TH-to-TH gaps
+        zone.SetLocalClearance(pcbnew.FromMM(0.25))  # 0.25mm lets the pour reach dense WSON GND pads while clearing 1.27mm TH gaps
         zone.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
         zone.SetThermalReliefGap(pcbnew.FromMM(0.3))
         zone.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.4))
+        # Drop tiny floating slivers that can't connect to the net (kept islands with a
+        # pad/via are retained; stitching vias tie the rest together).
+        zone.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
         outline = zone.Outline()
         corners = [(X0 + 0.5, Y0 + 0.5), (X1 - 0.5, Y0 + 0.5),
                    (X1 - 0.5, Y1 - 0.5), (X0 + 0.5, Y1 - 0.5)]
@@ -539,8 +870,14 @@ def pour_ground(board) -> None:
     # Override zone connection to FULL for pads that only touch the zone through a single
     # narrow spoke (starved thermals). USB-C GND: shield/return current + mechanical load.
     # U2 pad 3 (TP4056 GND) and DISP1 pad 2 (OLED GND): single spoke → starved thermal warning.
-    FULL_GND_REFS = {"J3", "U2", "DISP1", "C3", "U1"}
-    full_pad_numbers = {"J3": None, "U2": {"3"}, "DISP1": {"2"}, "C3": {"2"}}
+    # U4 (TPS63031 WSON-10), U8 (FS8205A) and R_CC2 have small/edge GND pads that
+    # cannot form the 2 thermal spokes a relief needs → starved/unconnected. Give them
+    # a solid (FULL) zone connection instead.
+    FULL_GND_REFS = {"J3", "U2", "DISP1", "C3", "U1", "J_MOTOR_PWR1",
+                     "U4", "U8", "R_CC2"}
+    full_pad_numbers = {"J3": None, "U2": {"3"}, "DISP1": {"2"}, "C3": {"2"},
+                        "J_MOTOR_PWR1": {"2"}, "U4": None, "U8": {"5"},
+                        "R_CC2": {"2"}}
     for fp in board.GetFootprints():
         ref = fp.GetReference()
         if ref in FULL_GND_REFS:
@@ -578,6 +915,46 @@ def verify() -> None:
         print(f"  DRC: no report generated, check {report}")
 
 
+BOARD_H = Y1 - Y0  # 54 mm — board height for coordinate conversion
+
+
+def _fix_jlc_cpl(csv_path: Path) -> None:
+    """Post-process KiCad CPL export for JLCPCB compatibility.
+
+    KiCad exports positions with origin at top-left (Y+ down, all Y positive).
+    But kicad-cli in KiCad 9 outputs with Y+ UP, giving negative Y values for
+    components below the top edge. JLCPCB requires origin at bottom-left with
+    Y+ UP, so we convert Y → board_height + Y.
+
+    Also switches to JLCPCB's recommended column format:
+        Designator, Mid X, Mid Y, Layer, Rotation
+    dropping the unnecessary Val/Package columns.
+    """
+    import csv, io
+
+    lines = csv_path.read_text().splitlines()
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
+
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
+
+    for row in reader:
+        ref = row.get("Ref", "").strip('"')
+        x = float(row.get("PosX", "0").strip('"'))
+        y = float(row.get("PosY", "0").strip('"'))
+        layer = row.get("Side", "bottom").strip('"')
+        rot = float(row.get("Rot", "0").strip('"'))
+
+        # KiCad exports Y+ UP with top-left origin (negative Y below top edge).
+        # JLCPCB expects Y+ UP with bottom-left origin.
+        y_jlc = round(BOARD_H + y, 6)  # y is negative, so this subtracts from board height
+        writer.writerow([ref, round(x, 6), y_jlc, layer, round(rot, 6)])
+
+    csv_path.write_text(out.getvalue())
+    print(f"  CPL converted to JLCPCB format ({sum(1 for _ in open(csv_path)) - 1} components)")
+
+
 def export_fab() -> None:
     """Gerbers, drill, CPL. Exports all gerbers, then removes silkscreen/fab layers."""
     gdir = FAB / "gerbers"
@@ -590,9 +967,10 @@ def export_fab() -> None:
         ["kicad-cli", "pcb", "export", "drill", "-o", str(gdir) + "/", str(PCB)],
         check=True, capture_output=True, timeout=60,
     )
+    cpl_path = FAB / "autofeeder-cpl.csv"
     subprocess.run(
         ["kicad-cli", "pcb", "export", "pos", "--format", "csv", "--units", "mm",
-         "-o", str(FAB / "autofeeder-cpl.csv"), str(PCB)],
+         "-o", str(cpl_path), str(PCB)],
         check=True, capture_output=True, timeout=60,
     )
 
@@ -602,7 +980,8 @@ def export_fab() -> None:
             f.unlink()
 
     print(f"  gerbers/drill in {gdir.relative_to(REPO_ROOT)}")
-    print(f"  CPL at {(FAB / 'autofeeder-cpl.csv').relative_to(REPO_ROOT)}")
+    print(f"  CPL at {cpl_path.relative_to(REPO_ROOT)}")
+    _fix_jlc_cpl(cpl_path)
 
 
 def setup() -> None:

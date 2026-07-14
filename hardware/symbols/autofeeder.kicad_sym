@@ -1572,6 +1572,10 @@
 				(name "L2" (effects (font (size 1.016 1.016))))
 				(number "2" (effects (font (size 1.016 1.016))))
 			)
+			(pin power_in line (at 0 -12.7 90) (length 5.08)
+				(name "EP" (effects (font (size 1.016 1.016))))
+				(number "11" (effects (font (size 1.016 1.016))))
+			)
 		)
 	)
 	(symbol "RT6150A"

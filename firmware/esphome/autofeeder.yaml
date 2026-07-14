@@ -7,6 +7,29 @@ esphome:
   friendly_name: ${friendly_name}
   platformio_options:
     board_build.flash_mode: dio
+  includes:
+    - custom_components/display_sleep.h
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: idle_timeout
+
+custom_component:
+  - id: display_sleep
+    lambda: |-
+      return {new DisplaySleepComponent(12, 18, 14, 15)};
+
+deep_sleep:
+  id: sleep_control
+  wakeup_pin:
+    number: GPIO0
+    allow_during_deep_sleep: true
+
+output:
+  - platform: gpio
+    pin: GPIO9
+    id: can_rs_out
+    restore_mode: ALWAYS_OFF
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -157,7 +180,7 @@ display:
           break;
       }
 
-# ===== MOTOR CONTROL (DRV8871) =====
+# ===== MOTOR CONTROL =====
 switch:
   - platform: gpio
     pin: GPIO19
@@ -167,6 +190,80 @@ switch:
     pin: GPIO20
     id: motor_in2
     internal: true
+
+# ===== SLEEP MANAGEMENT =====
+script:
+  - id: reset_idle_timer
+    then:
+      - script.stop: idle_timeout
+      - script.execute: idle_timeout
+
+  - id: idle_timeout
+    mode: restarting
+    then:
+      - delay: 60s
+      - lambda: |-
+          if (id(feed_active)) return;
+          id(display_sleep)->sleep();
+          id(can_rs_out).turn_on();
+      - delay: 50ms
+      - lambda: |-
+          gpio_hold_en((gpio_num_t)9);
+      - deep_sleep.enter:
+          id: sleep_control
+          sleep_duration: !lambda |-
+            auto now = id(rtc_time).now();
+            if (!now.is_valid()) return 3600ULL * 1000000;
+            int now_m = now.hour * 60 + now.minute;
+            int next_m = -1;
+            struct { int h, m, d; bool en; } s[4] = {
+              {id(sched0_hour), id(sched0_min), id(sched0_dur), id(sched0_enabled)},
+              {id(sched1_hour), id(sched1_min), id(sched1_dur), id(sched1_enabled)},
+              {id(sched2_hour), id(sched2_min), id(sched2_dur), id(sched2_enabled)},
+              {id(sched3_hour), id(sched3_min), id(sched3_dur), id(sched3_enabled)},
+            };
+            for (auto &s : s) {
+              if (!s.en || s.d <= 0) continue;
+              int sm = s.h * 60 + s.m;
+              if (sm > now_m && (next_m < 0 || sm < next_m)) next_m = sm;
+            }
+            if (next_m < 0) return 24ULL * 3600 * 1000000;
+            uint64_t us = (uint64_t)(next_m - now_m) * 60 * 1000000ULL;
+            if (us < 30000000ULL) us = 30000000ULL;
+            if (us > 24ULL * 3600 * 1000000) us = 24ULL * 3600 * 1000000;
+            return us;
+
+  - id: go_to_sleep_now
+    then:
+      - lambda: |-
+          id(display_sleep)->sleep();
+          id(can_rs_out).turn_on();
+      - delay: 50ms
+      - lambda: |-
+          gpio_hold_en((gpio_num_t)9);
+      - deep_sleep.enter:
+          id: sleep_control
+          sleep_duration: !lambda |-
+            auto now = id(rtc_time).now();
+            if (!now.is_valid()) return 3600ULL * 1000000;
+            int now_m = now.hour * 60 + now.minute;
+            int next_m = -1;
+            struct { int h, m, d; bool en; } s[4] = {
+              {id(sched0_hour), id(sched0_min), id(sched0_dur), id(sched0_enabled)},
+              {id(sched1_hour), id(sched1_min), id(sched1_dur), id(sched1_enabled)},
+              {id(sched2_hour), id(sched2_min), id(sched2_dur), id(sched2_enabled)},
+              {id(sched3_hour), id(sched3_min), id(sched3_dur), id(sched3_enabled)},
+            };
+            for (auto &s : s) {
+              if (!s.en || s.d <= 0) continue;
+              int sm = s.h * 60 + s.m;
+              if (sm > now_m && (next_m < 0 || sm < next_m)) next_m = sm;
+            }
+            if (next_m < 0) return 24ULL * 3600 * 1000000;
+            uint64_t us = (uint64_t)(next_m - now_m) * 60 * 1000000ULL;
+            if (us < 30000000ULL) us = 30000000ULL;
+            if (us > 24ULL * 3600 * 1000000) us = 24ULL * 3600 * 1000000;
+            return us;
 
 # ===== BUTTONS =====
 binary_sensor:
@@ -182,6 +279,7 @@ binary_sensor:
             int m = id(menu_state);
             if (m == 0) { id(menu_state) = 1; }
             else { id(menu_state) = 0; }
+        - script.execute: reset_idle_timer
 
   - platform: gpio
     pin: 1
@@ -195,6 +293,7 @@ binary_sensor:
             int m = id(menu_state);
             m = (m + 1) % 5;
             id(menu_state) = m;
+        - script.execute: reset_idle_timer
 
   - platform: gpio
     pin: 2
@@ -214,6 +313,7 @@ binary_sensor:
               id(feed_duration) = id(manual_duration);
               id(feed_remaining) = id(manual_duration);
             }
+        - script.execute: reset_idle_timer
 
   - platform: gpio
     pin: 3
@@ -243,6 +343,7 @@ binary_sensor:
                 id(menu_state) = 0;
                 break;
             }
+        - script.execute: reset_idle_timer
 
   - platform: gpio
     pin: 4
@@ -266,6 +367,7 @@ binary_sensor:
                 id(motor_runtime) = std::min(60, id(motor_runtime) + 1);
                 break;
             }
+        - script.execute: reset_idle_timer
 
   - platform: gpio
     pin: 5
@@ -289,6 +391,7 @@ binary_sensor:
                 id(motor_runtime) = std::max(1, id(motor_runtime) - 1);
                 break;
             }
+        - script.execute: reset_idle_timer
 
 # ===== BATTERY MONITORING =====
 sensor:
@@ -448,5 +551,7 @@ interval:
               id(feed_active) = false;
               id(motor_in1).turn_off();
               id(motor_in2).turn_off();
+              id(display_sleep)->wake();
+              id(reset_idle_timer).execute();
             }
           }

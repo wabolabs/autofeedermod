@@ -7,7 +7,7 @@ Drop-in PCB replacement for a timed chicken feed dispenser. ESP32-C6 based with 
 - **MCU**: ESP32-C6-Zero (Matter, WiFi 6, Thread, BLE 5) — socketed via 2×9 2.54mm headers + 7 pogo pins
 - **Display**: SSD1306 128×64 SPI OLED with full menu system (status, schedules, settings, GPS, manual feed)
 - **Motor**: DRV8871 H-bridge for 4VDC auger motor
-- **Power**: 18650 Li-ion with TP4056 charger + TPS63031 buck-boost to 3.3V
+- **Power**: 18650 Li-ion with TP4056 charger + DW01A/FS8205A battery protection + TPS63031 buck-boost to 3.3V
 - **RTC**: DS3231 module (I2C) with CR2032 backup for offline timekeeping
 - **GPS**: NEO-6M/8M module header (UART) for offline RTC time sync
 - **CAN Bus**: SN65HVD230 via USB-C SBU pins

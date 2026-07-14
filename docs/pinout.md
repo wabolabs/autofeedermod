@@ -14,8 +14,8 @@ ESP32-C6-Zero socket pinout per Waveshare diagram. Bottom edge pads accessed via
 | GP4 | BUTTON_UP | SW5 to GND | |
 | GP5 | BUTTON_DOWN | SW6 to GND | |
 | **Motor (right rail, TX/RX)** | | | |
-| GPIO19 (TX) | MOTOR_IN1 | DRV8871 IN1 | PWM capable |
-| GPIO20 (RX) | MOTOR_IN2 | DRV8871 IN2 | PWM capable |
+| GPIO19 (TX) | MOTOR_IN1 | MX1508 IN1 (via J_MOTOR_CTRL) | PWM capable |
+| GPIO20 (RX) | MOTOR_IN2 | MX1508 IN2 (via J_MOTOR_CTRL) | PWM capable |
 | **Display (right rail + bottom edge)** | | | |
 | GP14 | DISP_SCK | OLED SCK | SPI clock |
 | GP15 | DISP_MOSI | OLED MOSI | SPI data |
@@ -33,8 +33,7 @@ ESP32-C6-Zero socket pinout per Waveshare diagram. Bottom edge pads accessed via
 | **GPS UART** | | | |
 | GP7 (bottom pad 24) | GPS_TX | GPS module RX | UART TX output (pogo pin) |
 | GP8 (bottom pad 23) | GPS_RX | GPS module TX | UART RX input — strapping, input only (pogo pin) |
-| **Unused** | | | |
-| GP9 (bottom pad 22) | — | — | BOOT strapping, leave NC |
+| GP9 (bottom pad 22) | CAN_RS | SN65HVD230 RS pin | BOOT strapping — driven LOW at run (CAN high-speed), HIGH in deep sleep (CAN standby ~1µA) |
 | **Status LED** | | | |
 | GPIO6 | STATUS_LED | LED + 330R → GND | Also available on Zero's onboard WS2812 (GPIO8) |
 | **Free GPIOs** | | | |

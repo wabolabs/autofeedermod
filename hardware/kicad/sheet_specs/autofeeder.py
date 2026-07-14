@@ -143,7 +143,7 @@ def build() -> Sheet:
 
     # U4: TPS63031DSKR buck-boost (WSON-10, fixed 3.3V output)
     # Fixed 3.3V output — no feedback resistors needed. Pinout per DSK package:
-    # 1=VOUT, 2=L2, 3=PGND, 4=L1, 5=VIN, 6=EN, 7=PS/SYNC, 8=VINA, 9=GND, 10=FB
+    # 1=VOUT, 2=L2, 3=PGND, 4=L1, 5=VIN, 6=EN, 7=PS/SYNC, 8=VINA, 9=GND, 10=FB, 11=EP
     u4 = s.add("U4", "autofeeder:TPS63031DSKR", "TPS63031DSKR", at=(55, 150), footprint=FP_WSON10_TPS63031)
     label_pins(u4, {"5": "BATT_PROT",   # VIN
                     "8": "BATT_PROT",   # VINA
@@ -154,7 +154,8 @@ def build() -> Sheet:
                     "1": "VCC_3V3",     # VOUT
                     "10": "VCC_3V3",    # FB (tie to VOUT for fixed 3.3V)
                     "4": "L1_NODE",     # L1
-                    "2": "L2_NODE"})    # L2
+                    "2": "L2_NODE",     # L2
+                    "11": "GND"})       # EP (exposed thermal pad, per datasheet PowerPAD)
 
     # L1: 4.7uH inductor for TPS63031 L1-L2 (SW node to VOUT)
     l1 = s.add("L1", "Device:L", "4.7uH", at=(35, 145), footprint=FP_L_0805)
@@ -167,8 +168,8 @@ def build() -> Sheet:
     label_pins(c5, {"1": "VCC_3V3", "2": "GND"})
 
     # R3, R4: Battery voltage divider (BAT_MON)
-    r3 = s.add("R3", "Device:R", "10k", at=(75, 170), footprint=FP_R_0603)
-    r4 = s.add("R4", "Device:R", "10k", at=(75, 180), footprint=FP_R_0603)
+    r3 = s.add("R3", "Device:R", "47k", at=(75, 170), footprint=FP_R_0603)
+    r4 = s.add("R4", "Device:R", "47k", at=(75, 180), footprint=FP_R_0603)
     label_pins(r3, {"1": "BATT_PROT", "2": "BAT_MON"})
     label_pins(r4, {"1": "BAT_MON", "2": "GND"})
 
@@ -214,7 +215,9 @@ def build() -> Sheet:
     label_pins(u1, {"20": "DISP_DC", "25": "BAT_MON",
                     "19": "I2C_SDA", "21": "I2C_SCL",
                     "24": "GPS_TX", "23": "GPS_RX"})
-    s.no_connect(u1.pin_xy("22"))  # GP9/BOOT — strapping, leave NC
+    # GP9/BOOT — strapping, used to drive CAN_RS (SN65HVD230 standby)
+    # HIGH during sleep = CAN standby mode (~1µA); LOW during active = CAN high-speed
+    label_pins(u1, {"22": "CAN_RS"})
 
     # C1, C2: ESP32 decoupling
     c1 = s.add("C1", "Device:C", "100nF", at=(145, 60), footprint=FP_C_0603)
@@ -225,19 +228,16 @@ def build() -> Sheet:
     # R9: EN pull-up removed — EN is internal on the ESP32-C6-Zero and not exposed on the socket.
 
     # ===== MOTOR SECTION =====
+    # MX1508 dual H-bridge breakout board, connected via 2× JST XH 2-pin cables
+    # Motor output connects directly from MX1508 to the motor — not on main PCB.
 
-    # U5: DRV8871 H-bridge
-    u5 = s.add("U5", "autofeeder:DRV8871", "DRV8871", at=(55, 210), footprint=FP_SOIC8)
-    label_pins(u5, {"1": "MOTOR_IN1", "2": "MOTOR_IN2",
-                    "7": "M1_P", "8": "M1_N",
-                    "3": "VREF_NC", "4": "IPROPI_NC",
-                    "6": "BATT_PROT", "5": "GND"})
-    s.no_connect(u5.pin_xy("3"))
-    s.no_connect(u5.pin_xy("4"))
+    # J_MOTOR_CTRL: MX1508 logic inputs from ESP32
+    j_mtr_ctrl = s.add("J_MOTOR_CTRL", "autofeeder:JST_XH_2P", "MOTOR_CTRL", at=(55, 210), footprint=FP_JST_XH)
+    label_pins(j_mtr_ctrl, {"1": "MOTOR_IN1", "2": "MOTOR_IN2"})
 
-    # J2: Motor JST
-    j2 = s.add("J2", "autofeeder:JST_XH_2P", "MOTOR", at=(55, 240), footprint=FP_JST_XH)
-    label_pins(j2, {"1": "M1_P", "2": "M1_N"})
+    # J_MOTOR_PWR: MX1508 power supply (battery + ground)
+    j_mtr_pwr = s.add("J_MOTOR_PWR", "autofeeder:JST_XH_2P", "MOTOR_PWR", at=(55, 230), footprint=FP_JST_XH)
+    label_pins(j_mtr_pwr, {"1": "BATT_PROT", "2": "GND"})
 
     # ===== CAN SECTION =====
 
@@ -247,7 +247,8 @@ def build() -> Sheet:
                     "7": "CAN_H", "6": "CAN_L",
                     "5": "VREF_NC", "3": "VCC_3V3", "2": "GND"})
     s.no_connect(u6.pin_xy("5"))
-    s.no_connect(u6.pin_xy("8"))
+    # RS pin (8) driven by GP9 for standby mode during sleep
+    label_pins(u6, {"8": "CAN_RS"})
 
     # R5: CAN termination (120R, selectable via solder jumper)
     r5 = s.add("R5", "Device:R", "120R", at=(170, 210), footprint=FP_R_0603)

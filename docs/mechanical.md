@@ -5,14 +5,18 @@ and must fit the **existing fascia unchanged**. The electronics are redesigned, 
 mechanical interface below must match the original so it seats in the same enclosure and
 lines up with the fascia's button openings and display window.
 
-> **Status: MEASUREMENTS APPLIED (2026-06-02).** Caliper values below are now baked into
-> `hardware/kicad/autofeeder_pcb.py` (board outline, `PLACEMENT`, `MOUNTING_HOLES`). The board
-> generates, routes (0 unconnected), and exports fab files cleanly.
->
-> DRC: **0 violations (all severities), 0 unconnected.** Button↔hole courtyard and USB-C
-> `starved_thermal` errors fixed (tight-courtyard NPTH mounting-hole footprint; solid zone
-> connection on the USB-C GND pads). Silkscreen warnings fixed too: overlapping reference
-> labels hidden on silk (kept on Fab) and redundant edge-connector silk outlines removed.
+> **Status: MEASUREMENTS APPLIED (2026-06-05).** Layout rework: motor connectors
+> (`J_MOTOR_CTRL1`, `J_MOTOR_PWR1`) moved from default fallback (28,27) to right edge at
+> Y=10,Y=21 clustered above BATT (J1 at Y=32); J_RTC1 moved from (28,36) to (42,30) to clear
+> SW5 THT pins; Wabo Labs logo added to B.SilkS at (30,36). Connector positions now specified. 
+> The board generates, routes (0 unconnected), and exports fab files cleanly.
+> 
+> DRC: **13 violations (all pre-route clearance — OC_GATE/OD_GATE/L2_NODE vs U1/U4 pads;
+> 0 unconnected, 0 courtyard overlaps).** These are the same pre-existing pre-route track
+> clearance issues noted in BOM bodge-wire section. No new violations from layout changes.
+> Button↔hole courtyard and USB-C `starved_thermal` errors fixed. Silkscreen warnings
+> resolved: overlapping reference labels hidden on silk, redundant edge-connector silk
+> outlines removed.
 >
 > **IMPORTANT: ESP32-C6-Zero Programming.** The Waveshare module is **hand-socketed** on 2×9 2.54mm pin headers. The module's **onboard USB-C port** (tucked inside the enclosure) is the ONLY way to program the firmware — open the enclosure, connect USB-C, and use `esptool.py` or the Arduino IDE. The main board's USB-C (J3) is for charging only. The UART pins (TX/RX) are repurposed for motor control on the main board and are NOT connected to the programming header (J4). This choice prioritizes board density; reflashing requires a few minutes of enclosure access.
 >
@@ -44,8 +48,10 @@ Datum: bottom-left corner of the board = origin (0, 0). X → right, Y → up
 | Ref | Part | Edge | Center X (mm) | Center Y (mm) | Overhang past edge (mm) |
 |-----|------|------|---------------|---------------|-------------------------|
 | J3  | USB-C | bottom | 30 | 2.5? | 1 |
-| J4 (motor 电机) | JST-XH 2P | right (doesn't need precision as long as i's along that edge | `???` | `???` | `???` |
-| J1 (battery 电池) | JST-XH 2P | right (doesn't need precision as long as it's along that edge)  | `???` | `???` | `???` |
+| J4  | prog header 1x4 | right | 53 | 39 | |
+| J_MOTOR_CTRL1 | JST-XH 2P (MX1508 control) | right | 52 | 10 | |
+| J_MOTOR_PWR1 | JST-XH 2P (MX1508 power) | right | 52 | 21 | |
+| J1 (battery) | JST-XH 2P | right | 52 | 32 | |
 
 ## 4. Buttons (centers — must align with fascia openings)
 Original silkscreen: KEY1/KEY2/KEY3 across the top, KEY4/KEY5/KEY6 across the bottom.
