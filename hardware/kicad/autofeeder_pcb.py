@@ -133,6 +133,14 @@ def _fp_name(node) -> str:
     return ""
 
 
+def _value_name(node) -> str:
+    """Extract the component value (e.g. '100nF') from a netlist comp node."""
+    for c in node.children:
+        if isinstance(c, type(node)) and c.head == "value" and c.children:
+            return str(c.children[0]).strip('"')
+    return ""
+
+
 def _ref_name(node) -> str:
     """Extract reference from a netlist comp node."""
     for c in node.children:
@@ -248,11 +256,11 @@ def populate() -> None:
             ref = _ref_name(c)
             fp_str = _fp_name(c)
             if ref and fp_str:
-                comps.append((ref, fp_str))
+                comps.append((ref, fp_str, _value_name(c)))
 
     placed = 0
     errors = []
-    for ref, fp_id in comps:
+    for ref, fp_id, value in comps:
         res = _resolve_fp(fp_id)
         if res is None:
             errors.append(f"    SKIP {ref}: footprint {fp_id} not found")
@@ -267,6 +275,16 @@ def populate() -> None:
             errors.append(f"    SKIP {ref}: footprint load returned None")
             continue
         fp.SetReference(ref)
+        # Carry the schematic value + full lib:name FPID onto the footprint. Without this
+        # the footprint keeps the library's default Value (the footprint name) and a bare
+        # FPID, which makes every component fail schematic-parity on value/footprint fields
+        # (cosmetic, but it makes the PCB unreadable and diverges from the schematic).
+        if value:
+            fp.SetValue(value)
+        try:
+            fp.SetFPIDAsString(fp_id)
+        except Exception:
+            pass
         x, y, rot = PLACEMENT.get(ref, (28, 27, 0))
         fp.SetPosition(pcbnew.VECTOR2I_MM(x, y))
         if rot:
