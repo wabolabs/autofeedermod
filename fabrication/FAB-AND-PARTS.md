@@ -42,7 +42,7 @@ F/B paste, F/B silk, Edge.Cuts, drill, job).
 | Copper weight | 1 oz | standard |
 | Min track / clearance | 0.20 mm / 0.15 mm | within JLCPCB standard capability |
 | Min via | 0.30 mm drill / 0.60 mm pad | plus 0.60/0.65/0.80/1.00/1.10 mm pads, 2.10 mm mounting holes |
-| Surface finish | **ENIG (recommended)** | U4 is WSON-10 at 0.5 mm pitch + USB-C — ENIG gives better fine-pitch yield than HASL |
+| Surface finish | **HASL-with-lead** | Cheapest option ($7 vs $23.80 ENIG). U4 at 0.5 mm pitch is marginal but JLCPCB handles this routinely; switch to ENIG if reflow yield is poor |
 | Impedance control | No | not required |
 | Castellated / edge plating | No | |
 
@@ -51,33 +51,28 @@ JLCPCB's choice, or set to a silk-free area if you care.
 
 ---
 
-## 2. PCB assembly (SMT, JLCPCB) — **double-sided**
+## 2. PCB assembly (SMT, JLCPCB) — **single-sided (Economic)**
 
-SMT reflow parts sit on **both** sides:
-- **Bottom:** all ICs, passives, USB-C, LED, fuse, inductor (25 parts)
-- **Top:** the 6 tactile switches SW1–SW6 (user-facing)
+All SMT reflow parts are on the **bottom** side only (25 parts). The 6 tactile switches
+SW1–SW6 are on the top but are moved to the hand-solder list (§3) — they have large pads
+and are trivial to solder, saving ~$55 in setup/feeder fees by enabling Economic assembly.
 
-Upload these **SMT-only** files (they exclude the hand-soldered modules/connectors so the
-placement machine is never asked to place something that isn't there):
+Upload these **SMT-only** files (they exclude the hand-soldered switches, modules/connectors
+so the placement machine is never asked to place something that isn't there):
 
-- BOM → **`fabrication/autofeeder-bom-smt.csv`** (20 lines, 31 placements)
-- CPL → **`fabrication/autofeeder-cpl-smt.csv`** (31 placements)
+- BOM → **`fabrication/autofeeder-bom-smt.csv`** (18 lines, 25 placements — bottom only)
+- CPL → **`fabrication/autofeeder-cpl-smt.csv`** (25 placements — bottom only)
 
 > Do **not** upload the full `autofeeder-bom.csv` / `autofeeder-cpl.csv` for SMT — those
-> include U1, DISP1 and the THT connectors (hand-soldered / customer-supplied).
+> include U1, DISP1, the switches and the THT connectors (hand-soldered / customer-supplied).
 
 ### ⚠️ Decide before ordering assembly
-1. **D1 (1N5817) is an axial DO-41 through-hole diode** but is in the assembled BOM.
-   JLCPCB's standard SMT line cannot place axial THT. Choose one:
-   - Substitute an **SMD Schottky** (e.g. SS34 in SMA, ≥1 A / 40 V) and update the
-     footprint + BOM, **or**
-   - Move D1 to the hand-solder list and place it yourself.
-2. **Extended vs Basic parts:** U4 (C15516), U8 (C2830320), U3 (C18164398), U6 (C12084),
-   the switches (C127488) and USB-C (C165948) are likely JLCPCB *extended* parts (one-time
-   feeder fee each). Confirm live stock for every LCSC number at order time; have a
-   second-source ready for anything out of stock.
-3. **Confirm switch orientation** — the KMR2 tactile symbol carries 4 pins but the footprint
-   has only pads 1/2 (1→button net, 2→GND). This is expected; buttons are wired correctly.
+1. **Extended vs Basic parts:** U4 (C15516), U8 (C2830320), U3 (C18164398), U6 (C12084)
+   and USB-C (C165948) are likely JLCPCB *extended* parts (one-time feeder fee each).
+   The switches (C127488) are no longer on the SMT order — hand-solder them yourself.
+   Confirm live stock for every LCSC number at order time; have a second-source ready
+   for anything out of stock.
+2. **D1 (1N5817) is THT** — hand-solder it yourself (see §3).
 
 ---
 
@@ -89,9 +84,11 @@ placement machine is never asked to place something that isn't there):
 | U1 | **ESP32-C6-Zero** module (Waveshare) | 1 | Waveshare / distributor. Confirm the U1 land pattern mounting method (castellated solder vs pogo/socket) before assembly. |
 | DISP1 | **OLED 1.3" SPI 128×64** (SSD1306/SH1106) | 1 | generic; verify pin order matches the DISP1 header |
 
-### Hand-soldered THT connectors (have LCSC numbers; buy with the SMT order or locally)
+### Hand-soldered parts (have LCSC numbers; buy with the SMT order or locally)
 | Refs | Part | Qty | LCSC |
 |---|---|---|---|
+| SW1–SW6 | SKRPADE010 Tactile Switch | 6 | C127488 |
+| D1 | 1N5817 Schottky Diode DO-41 (THT) | 1 | C507852 |
 | J1, J_MOTOR_CTRL1, J_MOTOR_PWR1 | JST XH B2B-XH-A 2-pin vertical, 2.5 mm | 3 | C158012 |
 | J4, J_RTC1, J_GPS1 | Pin header 1×4, 2.54 mm vertical | 3 | C42431787 |
 
@@ -105,10 +102,11 @@ placement machine is never asked to place something that isn't there):
 ## 4. Hand-assembly order (after the SMT boards arrive)
 
 1. Inspect SMT work; reflow-touch any bridging on U4 (WSON) / J3 (USB-C).
-2. Solder THT connectors: J1, J4, J_RTC1, J_GPS1, J_MOTOR_PWR1, J_MOTOR_CTRL1.
-3. Solder D1 here if you chose hand-solder in §2.1.
-4. Mount U1 (ESP32-C6-Zero) per its chosen method; then DISP1 (OLED).
-5. Plug in RTC / GPS modules.
+2. Solder tactile switches SW1–SW6 (top side, large pads — straightforward).
+3. Solder D1 (1N5817 THT diode).
+4. Solder THT connectors: J1, J4, J_RTC1, J_GPS1, J_MOTOR_PWR1, J_MOTOR_CTRL1.
+5. Mount U1 (ESP32-C6-Zero) per its chosen method; then DISP1 (OLED).
+6. Plug in RTC / GPS modules.
 
 ## 5. Power-on bring-up (before connecting a motor)
 
