@@ -93,14 +93,14 @@ Order 10-20% extra for passives (cheap insurance against丢了 during assembly).
 | Ref(s) | Part | Qty | LCSC | Package | Notes |
 |---|---|---|---|---|---|
 | U4 | TPS63031DSKR Buck-Boost 3.3V | 1 | C15516 | WSON-10 2.5×2.5mm 0.5mm pitch | **Hardest part.** Use stencil + hot air. Exposed pad underneath. |
-| U8 | FS8205A Dual N-MOSFET | 1 | C2830320 | SOT-23-6 | |
+| U8 | FS8205A Dual N-MOSFET | 1 | C908265 | SOT-23-6 | |
 | U6 | SN65HVD230DR CAN Transceiver | 1 | C12084 | SOIC-8 | |
-| U3 | DW01A Battery Protection IC | 1 | C18164398 | SOT-23-6 | |
-| U2 | TP4056 Li-Ion Charger IC | 1 | C382139 | SOIC-8 | |
-| J3 | TYPE-C-31-M-12 USB-C Receptacle | 1 | C165948 | USB-C | Fine-pitch pins; hot air recommended |
+| U3 | DW01A Battery Protection IC | 1 | C2909013 | SOT-23-6 | |
+| U2 | TP4056 Li-Ion Charger IC | 1 | C725790 | ESOP-8 | |
+| J3 | TYPE-C-31-M-12 USB-C Receptacle | 1 | C3020560 | USB-C | Fine-pitch pins; hot air recommended |
 | F1 | PTC Resettable Fuse 500mA 15V | 1 | C151169 | 1812 | |
 | L1 | 4.7µH 600mA Inductor (TDK) | 1 | C404767 | 0805 | |
-| LED_CHG1 | RED LED 0603 (Everlight) | 1 | C2994782 | 0603 | |
+| LED_CHG1 | RED LED 0603 (Everlight) | 1 | C965849 | 0603 | |
 | C1,C3,C6 | 100nF 50V X7R | 3 | C14663 | 0603 | |
 | C2,C4 | 10µF 25V X7R | 2 | C3039694 | 0805 | |
 | C5 | 22µF 10V X5R | 1 | C29277 | 0805 | |
@@ -116,9 +116,9 @@ Order 10-20% extra for passives (cheap insurance against丢了 during assembly).
 | Ref(s) | Part | Qty | LCSC | Package | Notes |
 |---|---|---|---|---|---|
 | SW1–SW6 | SKRPADE010 Tactile Switch | 6 | C127488 | SW_Push | Large pads, trivial |
-| D1 | 1N5817 Schottky Diode | 1 | C507852 | DO-41 THT | Through-hole, solder with iron |
+| D1 | 1N5817 Schottky Diode | 1 | C3759312 | DO-41 THT | Through-hole, solder with iron |
 | J1, J_MOTOR_CTRL1, J_MOTOR_PWR1 | JST XH B2B-XH-A 2-pin Vertical | 3 | C158012 | THT 2.5mm | Through-hole connectors |
-| J4, J_RTC1, J_GPS1 | Pin Header 1×4 Vertical | 3 | C42431787 | THT 2.54mm | Through-hole headers |
+| J4, J_RTC1, J_GPS1 | Pin Header 1×4 Vertical | 3 | C2691448 | THT 2.54mm | Through-hole headers |
 
 ### External modules (customer-supplied, plug into headers)
 
